@@ -15,6 +15,14 @@ static const std::vector<const char*> kShaders = {
 class ExampleShaderToy : public ExampleBase
 {
 public:
+    ExampleUsage getUsage() const override
+    {
+        return {
+            "ShaderToy: compute shaders rendering to a texture.",
+            "Left / Right: Change shader | Mouse buttons: Interact"
+        };
+    }
+
     Result init(DeviceType deviceType) override
     {
         SLANG_RETURN_ON_FAIL(createDevice(deviceType, {Feature::Surface}, {}, m_device.writeRef()));
@@ -130,6 +138,8 @@ public:
 
         // Blit result to the surface image
         SLANG_RETURN_ON_FAIL(m_blitter->blit(image, m_texture, commandEncoder));
+
+        SLANG_RETURN_ON_FAIL(drawUsage(commandEncoder, image));
 
         // Submit command buffer
         SLANG_RETURN_ON_FAIL(m_queue->submit(commandEncoder->finish()));

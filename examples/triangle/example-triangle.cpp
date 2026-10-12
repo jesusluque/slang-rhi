@@ -20,6 +20,8 @@ static const Vertex kVertexData[3] = {
 class ExampleTriangle : public ExampleBase
 {
 public:
+    ExampleUsage getUsage() const override { return {"Triangle: vertex buffers and a graphics pipeline.", ""}; }
+
     Result init(DeviceType deviceType) override
     {
         SLANG_RETURN_ON_FAIL(
@@ -139,6 +141,8 @@ public:
         drawArgs.vertexCount = sizeof(kVertexData) / sizeof(kVertexData[0]);
         passEncoder->draw(drawArgs);
         passEncoder->end();
+
+        SLANG_RETURN_ON_FAIL(drawUsage(commandEncoder, image));
 
         // Submit command buffer
         m_queue->submit(commandEncoder->finish());
