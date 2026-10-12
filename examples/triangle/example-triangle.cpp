@@ -96,7 +96,7 @@ public:
 
         // Acquire next image from the surface
         ComPtr<ITexture> image;
-        m_surface->acquireNextImage(image.writeRef());
+        SLANG_RETURN_ON_FAIL(acquireFrame(m_surface, image.writeRef()));
         if (!image)
         {
             return SLANG_OK;
@@ -150,7 +150,7 @@ public:
         m_grey = (m_grey + (1.f / 60.f)) > 1.f ? 0.f : m_grey + (1.f / 60.f);
 
         // Present the surface
-        return m_surface->present();
+        return presentFrame(m_surface, m_queue);
     }
 
     virtual void onResize(int width, int height, int framebufferWidth, int framebufferHeight) override

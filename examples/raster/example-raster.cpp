@@ -657,7 +657,7 @@ public:
         if (!m_surface->getConfig())
             return SLANG_OK;
         ComPtr<ITexture> image;
-        SLANG_RETURN_ON_FAIL(m_surface->acquireNextImage(image.writeRef()));
+        SLANG_RETURN_ON_FAIL(acquireFrame(m_surface, image.writeRef()));
         if (!image)
             return SLANG_OK;
         auto encoder = m_queue->createCommandEncoder();
@@ -668,7 +668,7 @@ public:
         ComPtr<ICommandBuffer> commands;
         SLANG_RETURN_ON_FAIL(encoder->finish(commands.writeRef()));
         SLANG_RETURN_ON_FAIL(m_queue->submit(commands));
-        return m_surface->present();
+        return presentFrame(m_surface, m_queue);
     }
 
     void onResize(int width, int height, int framebufferWidth, int framebufferHeight) override

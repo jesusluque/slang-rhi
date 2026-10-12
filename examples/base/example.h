@@ -15,6 +15,10 @@
 #include <algorithm>
 #include <cctype>
 
+#if SLANG_WASM
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#else
 #if SLANG_WINDOWS_FAMILY
 #define GLFW_EXPOSE_NATIVE_WIN32
 #elif SLANG_LINUX_FAMILY
@@ -24,6 +28,7 @@
 #endif
 #include <GLFW/glfw3native.h>
 #include <slang-rhi/glfw.h>
+#endif
 
 namespace rhi {
 
@@ -44,6 +49,12 @@ public:
     // Draw after the example has finished rendering, before submission.
     // Scale multiplies the standard text size, independently of the window's pixel density.
     Result drawUsage(ICommandEncoder* encoder, ITexture* image, std::string_view status = {}, float scale = 1.5f);
+
+    // Browser rendering uses an offscreen image: async buffer mapping can yield,
+    // whereas a canvas image is only valid during the current browser task.
+    Result acquireFrame(ISurface* surface, ITexture** image);
+    Result presentFrame(ISurface* surface, ICommandQueue* queue);
+    bool isMouseHovered() const;
 
     // Called to initialize the example for the specified device type.
     virtual Result init(DeviceType deviceType) = 0;
@@ -110,6 +121,9 @@ public:
     Result createSurface(IDevice* device, Format format, ISurface** outSurface, bool enableOverlay = true);
 
 public:
+#if SLANG_WASM
+    bool m_resizePending = false;
+#endif
     const char* m_shaderSearchPath = nullptr;
     DeviceType m_deviceType = DeviceType::Default;
     std::vector<Feature> m_missingFeatures;
@@ -121,6 +135,11 @@ public:
 private:
     bool m_uiVisible = true;
     std::unique_ptr<ExampleOverlay> m_overlay;
+#if SLANG_WASM
+    ComPtr<IDevice> m_browserDevice;
+    ComPtr<ITexture> m_browserImage;
+    std::unique_ptr<Blitter> m_browserBlitter;
+#endif
 };
 
 // Optional presentation of usage and example-owned status text. No window dependency.
@@ -276,7 +295,13 @@ inline Result ExampleBase::createWindow(IDevice* device, const char* title, uint
         deviceInfo.adapterName
     );
 
+#if SLANG_WASM
+    m_browserDevice = device;
+    m_browserBlitter = std::make_unique<Blitter>(device);
+    glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+#else
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+#endif
 
     m_window = glfwCreateWindow(width, height, fullTitle, nullptr, nullptr);
     if (!m_window)
@@ -325,7 +350,11 @@ inline Result ExampleBase::createSurface(IDevice* device, Format format, ISurfac
     int width, height;
     glfwGetFramebufferSize(m_window, &width, &height);
 
+#if SLANG_WASM
+    SLANG_RETURN_ON_FAIL(device->createSurface(WindowHandle::fromWGPUCanvas("#canvas"), outSurface));
+#else
     SLANG_RETURN_ON_FAIL(device->createSurface(getWindowHandleFromGLFW(m_window), outSurface));
+#endif
     SurfaceConfig surfaceConfig;
     surfaceConfig.width = width;
     surfaceConfig.height = height;
@@ -343,6 +372,57 @@ inline Result ExampleBase::createSurface(IDevice* device, Format format, ISurfac
 
 
     return SLANG_OK;
+}
+
+inline Result ExampleBase::acquireFrame(ISurface* surface, ITexture** image)
+{
+#if SLANG_WASM
+    *image = nullptr;
+    const auto* config = surface->getConfig();
+    if (!config)
+        return SLANG_OK;
+    if (!m_browserImage || m_browserImage->getDesc().size.width != config->width ||
+        m_browserImage->getDesc().size.height != config->height || m_browserImage->getDesc().format != config->format)
+    {
+        TextureDesc desc = {};
+        desc.size = {config->width, config->height, 1};
+        desc.format = config->format;
+        desc.usage = TextureUsage::RenderTarget | TextureUsage::ShaderResource;
+        SLANG_RETURN_ON_FAIL(m_browserDevice->createTexture(desc, nullptr, m_browserImage.writeRef()));
+    }
+    *image = m_browserImage.get();
+    (*image)->addRef();
+    return SLANG_OK;
+#else
+    return surface->acquireNextImage(image);
+#endif
+}
+
+inline Result ExampleBase::presentFrame(ISurface* surface, ICommandQueue* queue)
+{
+#if SLANG_WASM
+    // This final pass has no uniform uploads or readbacks, so it never suspends
+    // with a canvas texture acquired. All scene work was submitted offscreen.
+    auto encoder = queue->createCommandEncoder();
+    ComPtr<ITexture> image;
+    SLANG_RETURN_ON_FAIL(surface->acquireNextImage(image.writeRef()));
+    if (!image)
+        return SLANG_OK;
+    SLANG_RETURN_ON_FAIL(m_browserBlitter->blit(image, m_browserImage, encoder));
+    ComPtr<ICommandBuffer> commands;
+    SLANG_RETURN_ON_FAIL(encoder->finish(commands.writeRef()));
+    SLANG_RETURN_ON_FAIL(queue->submit(commands));
+#endif
+    return surface->present();
+}
+
+inline bool ExampleBase::isMouseHovered() const
+{
+#if SLANG_WASM
+    return EM_ASM_INT({ return Module['canvas'].matches(':hover'); });
+#else
+    return glfwGetWindowAttrib(getMouseSourceWindow(), GLFW_HOVERED) != 0;
+#endif
 }
 
 inline Result ExampleBase::drawUsage(ICommandEncoder* encoder, ITexture* image, std::string_view status, float scale)
@@ -366,6 +446,9 @@ inline void layoutWindows()
         return;
     }
 
+#if SLANG_WASM
+    return;
+#else
     static const int kMargin = 100;
 
     int wx, wy, ww, wh;
@@ -397,6 +480,7 @@ inline void layoutWindows()
     }
 
     layoutInProgress = false;
+#endif
 }
 
 inline void glfwWindowPosCallback(GLFWwindow* window, int xpos, int ypos)
@@ -472,12 +556,18 @@ inline void glfwWindowMaximizeCallback(GLFWwindow* window, int maximized)
 
 inline void glfwFramebufferSizeCallback(GLFWwindow* window, int width, int height)
 {
+#if SLANG_WASM
+    // Browser callbacks must not initiate a second Asyncify stack while the main
+    // loop is suspended. Apply resizes from that loop before acquiring a frame.
+    static_cast<ExampleBase*>(glfwGetWindowUserPointer(window))->m_resizePending = true;
+#else
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
     int framebufferWidth, framebufferHeight;
     glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
     ExampleBase* example = (ExampleBase*)glfwGetWindowUserPointer(window);
     example->onResize(windowWidth, windowHeight, framebufferWidth, framebufferHeight);
+#endif
 }
 
 inline void glfwCursorPosCallback(GLFWwindow* window, double xpos, double ypos)
@@ -530,6 +620,9 @@ inline void glfwKeyCallback(GLFWwindow* window, int key, int scancode, int actio
 inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample)(), const char* shaderSearchPath)
 {
     std::vector<DeviceType> deviceTypes = {
+#if SLANG_WASM
+        DeviceType::WGPU,
+#else
         DeviceType::D3D11,
         DeviceType::D3D12,
         DeviceType::Vulkan,
@@ -537,6 +630,7 @@ inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample
         DeviceType::CPU,
         DeviceType::CUDA,
         DeviceType::WGPU,
+#endif
     };
 
     if (argc > 1)
@@ -640,6 +734,12 @@ inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample
     if (examples.empty())
         exitCode = 1;
 
+#if SLANG_WASM
+    EM_ASM({
+        Module['rhiReady'] = true;
+        Module['rhiFrameCount'] = 0;
+    });
+#endif
     while (!examples.empty())
     {
         glfwPollEvents();
@@ -651,6 +751,24 @@ inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample
         {
             ExampleBase* example = *it;
             shouldClose |= example->shouldClose();
+#if SLANG_WASM
+            double cssWidth, cssHeight;
+            // GLFW sets the canvas CSS size when high-DPI support is enabled.
+            // Measure its container so those inline styles do not prevent resizing.
+            emscripten_get_element_css_size("#viewport", &cssWidth, &cssHeight);
+            int width, height;
+            glfwGetWindowSize(example->m_window, &width, &height);
+            if (width != int(cssWidth) || height != int(cssHeight))
+                glfwSetWindowSize(example->m_window, int(cssWidth), int(cssHeight));
+            if (example->m_resizePending)
+            {
+                int framebufferWidth, framebufferHeight;
+                glfwGetWindowSize(example->m_window, &width, &height);
+                glfwGetFramebufferSize(example->m_window, &framebufferWidth, &framebufferHeight);
+                example->m_resizePending = false;
+                example->onResize(width, height, framebufferWidth, framebufferHeight);
+            }
+#endif
             Result result = example->update(time);
             if (SLANG_SUCCEEDED(result))
                 result = example->draw();
@@ -674,6 +792,11 @@ inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample
         }
         if (shouldClose)
             break;
+#if SLANG_WASM
+        EM_ASM({ ++Module['rhiFrameCount']; });
+        // Keep the native lifetime while yielding to browser events between frames.
+        emscripten_sleep(16);
+#endif
     }
 
     for (ExampleBase* example : examples)
@@ -686,7 +809,9 @@ inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample
     mainExample = nullptr;
 
     glfwTerminate();
-
+#if SLANG_WASM
+    EM_ASM({ Module['rhiStopped'] = true; });
+#endif
     return exitCode;
 }
 

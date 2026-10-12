@@ -492,8 +492,7 @@ public:
     Result update(double time) override
     {
         bool visible = m_surface->getConfig() != nullptr;
-        auto source = getMouseSourceWindow();
-        if (!glfwGetWindowAttrib(source, GLFW_HOVERED))
+        if (!isMouseHovered())
         {
             m_mouseValid = false;
             m_mouseSimulatedWorld = m_mouseWorld;
@@ -515,7 +514,7 @@ public:
         if (!m_surface->getConfig())
             return SLANG_OK;
         ComPtr<ITexture> image;
-        SLANG_RETURN_ON_FAIL(m_surface->acquireNextImage(image.writeRef()));
+        SLANG_RETURN_ON_FAIL(acquireFrame(m_surface, image.writeRef()));
         if (!image)
             return SLANG_OK;
         SLANG_RETURN_ON_FAIL(pollReadbacks());
@@ -582,7 +581,7 @@ public:
             submit.signalFenceCount = 1;
         }
         SLANG_RETURN_ON_FAIL(m_queue->submit(submit));
-        return m_surface->present();
+        return presentFrame(m_surface, m_queue);
     }
 
     void onResize(int width, int height, int framebufferWidth, int framebufferHeight) override
