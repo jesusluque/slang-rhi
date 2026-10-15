@@ -42,6 +42,11 @@ struct Camera
     }
 };
 
+inline math::float3 orbitDirection(float yaw, float pitch)
+{
+    return {std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)};
+}
+
 struct FlyCameraController
 {
     Camera* camera = nullptr;
@@ -185,6 +190,62 @@ struct FlyCameraController
         }
 
         return changed;
+    }
+};
+
+// Orbit parameters belong to the caller; held input and pending motion belong to the controller.
+struct OrbitCameraController
+{
+    bool mouseDown = false;
+    math::float2 mousePos = {};
+    math::float2 rotateDelta = {};
+    float scrollDelta = 0;
+    float sensitivity = 0.006f;
+    float minPitch = 0.03f, maxPitch = 1.3f;
+    float minDistance = 4.0f, maxDistance = 20.0f;
+
+    // Clear held input and pending motion, preserving settings and the last cursor position.
+    void reset()
+    {
+        mouseDown = false;
+        rotateDelta = {};
+        scrollDelta = 0;
+    }
+
+    // Interpret forwarded events only; GLFW/window access stays on the main thread.
+    bool onMouseButton(int button, int action)
+    {
+        if (button != GLFW_MOUSE_BUTTON_LEFT)
+            return false;
+        mouseDown = action != GLFW_RELEASE;
+        return true;
+    }
+
+    void onMousePosition(float x, float y)
+    {
+        math::float2 pos = {x, y};
+        if (mouseDown)
+            rotateDelta += pos - mousePos;
+        mousePos = pos;
+    }
+
+    void onScroll(float x, float y) { scrollDelta += y; }
+
+    bool update(float& yaw, float& pitch, float& distance)
+    {
+        float previousYaw = yaw, previousPitch = pitch, previousDistance = distance;
+        if (math::length(rotateDelta) > 0)
+        {
+            yaw -= rotateDelta.x * sensitivity;
+            pitch = std::clamp(pitch + rotateDelta.y * sensitivity, minPitch, maxPitch);
+            rotateDelta = {};
+        }
+        if (scrollDelta != 0)
+        {
+            distance = std::clamp(distance * std::exp(-0.1f * scrollDelta), minDistance, maxDistance);
+            scrollDelta = 0;
+        }
+        return yaw != previousYaw || pitch != previousPitch || distance != previousDistance;
     }
 };
 

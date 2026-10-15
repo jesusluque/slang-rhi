@@ -105,6 +105,8 @@ public:
     Result createWindow(IDevice* device, const char* title, uint32_t width = 640, uint32_t height = 360);
     // Destroys the window.
     void destroyWindow();
+    // Sets the full window title on the main thread.
+    Result setWindowTitle(const char* title);
     // Returns whether the window has been asked to close.
     bool shouldClose() const;
 
@@ -471,6 +473,19 @@ inline void ExampleBase::destroyWindow()
             m_window = m_runner->window = nullptr;
             detail::updateMainExample();
             detail::layoutWindows();
+            return SLANG_OK;
+        }
+    );
+}
+
+inline Result ExampleBase::setWindowTitle(const char* title)
+{
+    return detail::runOnMainThread(
+        [&]() -> Result
+        {
+            if (!m_window)
+                return SLANG_E_INVALID_HANDLE;
+            glfwSetWindowTitle(m_window, title);
             return SLANG_OK;
         }
     );
