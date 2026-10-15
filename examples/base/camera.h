@@ -42,6 +42,11 @@ struct Camera
     }
 };
 
+inline math::float3 orbitDirection(float yaw, float pitch)
+{
+    return {std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)};
+}
+
 struct FlyCameraController
 {
     Camera* camera = nullptr;
@@ -185,6 +190,24 @@ struct FlyCameraController
         }
 
         return changed;
+    }
+};
+
+// Orbit state belongs to the caller, allowing camera presets and reset controls.
+struct OrbitCameraController
+{
+    float sensitivity = 0.006f;
+    float minPitch = 0.03f, maxPitch = 1.3f;
+    float minDistance = 4.0f, maxDistance = 20.0f;
+
+    void rotate(math::float2 delta, float& yaw, float& pitch) const
+    {
+        yaw -= delta.x * sensitivity;
+        pitch = std::clamp(pitch + delta.y * sensitivity, minPitch, maxPitch);
+    }
+    void zoom(float scroll, float& distance) const
+    {
+        distance = std::clamp(distance * std::exp(-0.1f * scroll), minDistance, maxDistance);
     }
 };
 

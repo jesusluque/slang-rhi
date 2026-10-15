@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <cstdarg>
@@ -87,6 +88,17 @@ public:
     // Returns the current mouse Y position.
     float getMouseY() const { return m_mousePos[1]; }
 
+    // Main-thread snapshot associated with the mirrored mouse input. The source
+    // identity is for comparison only; workers must not query GLFW windows.
+    struct MouseSourceState
+    {
+        const void* id = nullptr;
+        int width = 0;
+        int height = 0;
+        bool hovered = false;
+    };
+    const MouseSourceState& getMouseSourceState() const { return m_mouseSource; }
+
     // Device management
 
     // Create a device and retain the missing features if the example requires
@@ -103,6 +115,8 @@ public:
     // Creates a window with the specified title and size.
     // Automatically appends device and adapter information to the title.
     Result createWindow(IDevice* device, const char* title, uint32_t width = 640, uint32_t height = 360);
+    // Sets the full window title on the main thread.
+    Result setWindowTitle(const char* title);
     // Destroys the window.
     void destroyWindow();
     // Returns whether the window has been asked to close.
@@ -150,6 +164,7 @@ public:
 
     float m_mousePos[2] = {0.0f, 0.0f};
     bool m_mouseDown[3] = {false, false, false};
+    MouseSourceState m_mouseSource;
 
 private:
     friend struct detail::ExampleRunner;
@@ -171,6 +186,7 @@ inline void glfwWindowIconifyCallback(GLFWwindow* window, int iconified);
 inline void glfwWindowMaximizeCallback(GLFWwindow* window, int maximized);
 inline void glfwFramebufferSizeCallback(GLFWwindow* window, int width, int height);
 inline void glfwCursorPosCallback(GLFWwindow* window, double xpos, double ypos);
+inline void glfwCursorEnterCallback(GLFWwindow* window, int entered);
 inline void glfwMouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
 inline void glfwScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
 inline void glfwKeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
@@ -194,9 +210,10 @@ struct ExampleRunner
     bool iconified = false; // Main thread only.
     std::thread thread;
     bool syncFrames = true; // Set before starting the worker.
-    std::atomic<bool> stopping = false;
-    std::atomic<bool> done = true;
-    std::atomic<bool> frameReady = false;
+    uint32_t frameLimit = 0; // Zero runs until the windows are closed.
+    std::atomic<bool> stopping{false};
+    std::atomic<bool> done{true};
+    std::atomic<bool> frameReady{false};
     // Read by the main thread only after joining.
     bool initialized = false;
     int exitCode = 0;
@@ -438,6 +455,7 @@ inline Result ExampleBase::createWindow(IDevice* device, const char* title, uint
             glfwSetWindowMaximizeCallback(m_window, detail::glfwWindowMaximizeCallback);
             glfwSetFramebufferSizeCallback(m_window, detail::glfwFramebufferSizeCallback);
             glfwSetCursorPosCallback(m_window, detail::glfwCursorPosCallback);
+            glfwSetCursorEnterCallback(m_window, detail::glfwCursorEnterCallback);
             glfwSetMouseButtonCallback(m_window, detail::glfwMouseButtonCallback);
             glfwSetScrollCallback(m_window, detail::glfwScrollCallback);
             glfwSetKeyCallback(m_window, detail::glfwKeyCallback);
@@ -457,6 +475,19 @@ inline Result ExampleBase::createWindow(IDevice* device, const char* title, uint
     );
 }
 
+inline Result ExampleBase::setWindowTitle(const char* title)
+{
+    return detail::runOnMainThread(
+        [&]() -> Result
+        {
+            if (!m_window)
+                return SLANG_E_INVALID_HANDLE;
+            glfwSetWindowTitle(m_window, title);
+            return SLANG_OK;
+        }
+    );
+}
+
 inline void ExampleBase::destroyWindow()
 {
     if (!m_window)
@@ -466,6 +497,7 @@ inline void ExampleBase::destroyWindow()
         {
             if (detail::mainExample == m_runner)
                 detail::setMainExample(nullptr);
+            detail::glfwCursorEnterCallback(m_window, GLFW_FALSE);
             glfwSetWindowUserPointer(m_window, nullptr);
             glfwDestroyWindow(m_window);
             m_window = m_runner->window = nullptr;
@@ -765,15 +797,40 @@ inline void broadcastEvent(ExampleRunner::Event event)
         example->postEvent(event);
 }
 
-inline void glfwCursorPosCallback(GLFWwindow*, double x, double y)
+inline ExampleBase::MouseSourceState getMouseSourceState(GLFWwindow* window)
 {
+    ExampleBase::MouseSourceState state;
+    state.id = glfwGetWindowUserPointer(window);
+    glfwGetWindowSize(window, &state.width, &state.height);
+    state.hovered = glfwGetWindowAttrib(window, GLFW_HOVERED) != 0;
+    return state;
+}
+
+inline void glfwCursorPosCallback(GLFWwindow* window, double x, double y)
+{
+    auto source = getMouseSourceState(window);
     broadcastEvent(
         {ExampleRunner::Event::MousePosition,
          [=](ExampleBase& example)
          {
              example.m_mousePos[0] = float(x);
              example.m_mousePos[1] = float(y);
+             example.m_mouseSource = source;
              example.onMousePosition(float(x), float(y));
+         }}
+    );
+}
+
+inline void glfwCursorEnterCallback(GLFWwindow* window, int entered)
+{
+    auto source = getMouseSourceState(window);
+    source.hovered = entered != 0;
+    broadcastEvent(
+        {ExampleRunner::Event::Input,
+         [source](ExampleBase& example)
+         {
+             if (source.hovered || example.getMouseSourceState().id == source.id)
+                 example.m_mouseSource = source;
          }}
     );
 }
@@ -867,6 +924,7 @@ inline void ExampleRunner::run(ExampleBase* (*createExample)(), DeviceType devic
             exitCode = 1;
         }
     }
+    uint32_t frameCount = 0;
     while (initialized && !stopping)
     {
         std::vector<Event> pending;
@@ -916,13 +974,23 @@ inline void ExampleRunner::run(ExampleBase* (*createExample)(), DeviceType devic
             time = glfwGetTime();
         result = example->update(time);
         if (SLANG_SUCCEEDED(result) && !stopping && !minimized)
+        {
             result = example->draw();
+            if (SLANG_SUCCEEDED(result) && frameLimit && ++frameCount == frameLimit)
+                break;
+        }
         if (SLANG_FAILED(result))
         {
             LOG_ERROR("%s: example frame failed (0x%08x).", name, unsigned(result));
             exitCode = 1;
             break;
         }
+    }
+    if (initialized && frameLimit)
+    {
+        LOG_INFO("%s: completed %u / %u frames.", name, frameCount, frameLimit);
+        if (frameCount < frameLimit)
+            exitCode = 1;
     }
     stop();
     example->shutdown();
@@ -948,6 +1016,7 @@ inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample
 
     bool syncFrames = true;
     bool deviceSelected = false;
+    uint32_t frameLimit = 0;
     for (int i = 1; i < argc; ++i)
     {
         std::string option = argv[i];
@@ -956,9 +1025,23 @@ inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample
             syncFrames = false;
             continue;
         }
+        if (option == "--frames" && !frameLimit && i + 1 < argc)
+        {
+            std::string_view value = argv[++i];
+            auto parsed = std::from_chars(value.data(), value.data() + value.size(), frameLimit);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || frameLimit == 0)
+            {
+                LOG_ERROR("--frames requires a positive integer.");
+                return 1;
+            }
+            continue;
+        }
         if (option != "--device" || deviceSelected || i + 1 == argc)
         {
-            LOG_ERROR("Usage: %s [--device <d3d11|d3d12|vulkan|metal|cpu|cuda|wgpu>] [--free-running]", argv[0]);
+            LOG_ERROR(
+                "Usage: %s [--device <d3d11|d3d12|vulkan|metal|cpu|cuda|wgpu>] [--free-running] [--frames N]",
+                argv[0]
+            );
             return 1;
         }
         deviceSelected = true;
@@ -1021,6 +1104,7 @@ inline int runExamples(int argc, const char** argv, ExampleBase* (*createExample
     {
         auto& example = *examples[i];
         example.syncFrames = syncFrames;
+        example.frameLimit = frameLimit;
         example.done = false;
         example.thread = std::thread(&ExampleRunner::run, &example, createExample, supportedTypes[i], shaderSearchPath);
     }
