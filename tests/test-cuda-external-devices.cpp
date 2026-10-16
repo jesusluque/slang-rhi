@@ -215,4 +215,50 @@ GPU_TEST_CASE("cuda-device-scope", CUDA)
     cuCtxDestroy(otherContext);
     device->setCudaContextCurrent();
 }
+GPU_TEST_CASE("cuda-device-close-frees-heap-pages", CUDA)
+{
+    using namespace rhi::cuda;
+
+    // The main test device keeps the primary context alive, so memory leaked by
+    // a closed device that shares it stays allocated and is visible here.
+    auto getFreeMemory = [&]()
+    {
+        SLANG_CUDA_CTX_SCOPE(getCUDADevice(device));
+        SLANG_CUDA_ASSERT_ON_FAIL(cuCtxSynchronize());
+        size_t freeMem = 0, totalMem = 0;
+        SLANG_CUDA_ASSERT_ON_FAIL(cuMemGetInfo(&freeMem, &totalMem));
+        return freeMem;
+    };
+
+    size_t freeBefore = getFreeMemory();
+
+    const int deviceCount = 4;
+    for (int i = 0; i < deviceCount; ++i)
+    {
+        GpuTestContext ctx2;
+        ctx2.slangGlobalSession = getSlangGlobalSession();
+        ComPtr<IDevice> device2 = createTestingDevice(&ctx2, DeviceType::CUDA, false);
+        REQUIRE(device2 != nullptr);
+
+        // Allocate from both the device-local and the host (pinned) heaps.
+        BufferDesc bufferDesc = {};
+        bufferDesc.size = 1024 * 1024;
+        bufferDesc.usage = BufferUsage::ShaderResource | BufferUsage::CopyDestination | BufferUsage::CopySource;
+        bufferDesc.memoryType = MemoryType::DeviceLocal;
+        ComPtr<IBuffer> deviceBuffer;
+        REQUIRE_CALL(device2->createBuffer(bufferDesc, nullptr, deviceBuffer.writeRef()));
+        bufferDesc.memoryType = MemoryType::Upload;
+        ComPtr<IBuffer> uploadBuffer;
+        REQUIRE_CALL(device2->createBuffer(bufferDesc, nullptr, uploadBuffer.writeRef()));
+    }
+
+    size_t freeAfter = getFreeMemory();
+
+    // Each leaked device-local page is 256 MB, allow some slack for driver allocations.
+    const size_t tolerance = 64 * 1024 * 1024;
+    CHECK(freeAfter + tolerance >= freeBefore);
+
+    device->setCudaContextCurrent();
+}
+
 #endif

@@ -308,6 +308,27 @@ HeapImpl::~HeapImpl()
     // Release all cached pages
     DeviceImpl* deviceImpl = static_cast<DeviceImpl*>(getDevice());
     m_pageCache.releaseAll(deviceImpl, m_desc.memoryType);
+
+    // Release pages that are still owned by the heap. Pages are only returned
+    // to CUDA by removeEmptyPages(), so most pages are still here. The base
+    // Heap destructor only deletes the page objects, which would leak the CUDA
+    // memory when the context outlives the device (e.g. a shared primary context).
+    SLANG_CUDA_CTX_SCOPE(deviceImpl);
+    m_pendingFrees.clear();
+    for (Page* page_ : m_pages)
+    {
+        PageImpl* page = static_cast<PageImpl*>(page_);
+        if (m_desc.memoryType == MemoryType::DeviceLocal)
+        {
+            SLANG_CUDA_ASSERT_ON_FAIL(cuMemFree(page->m_cudaMemory));
+        }
+        else
+        {
+            SLANG_CUDA_ASSERT_ON_FAIL(cuMemFreeHost((void*)page->m_cudaMemory));
+        }
+        delete page;
+    }
+    m_pages.clear();
 }
 
 Result HeapImpl::free(HeapAlloc allocation)
