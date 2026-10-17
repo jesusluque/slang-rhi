@@ -684,18 +684,22 @@ void CommandRecorder::cmdSetRenderState(const commands::SetRenderState& cmd)
         encoder->setScissorRects(scissorRects, state.scissorRectCount);
     }
 
-    const RasterizerDesc& rasterizer = m_renderPipeline->m_rasterizerDesc;
-    encoder->setFrontFacingWinding(translateWinding(rasterizer.frontFace));
-    encoder->setCullMode(translateCullMode(rasterizer.cullMode));
-    encoder->setDepthClipMode(
-        rasterizer.depthClipEnable ? MTL::DepthClipModeClip : MTL::DepthClipModeClamp
-    ); // TODO correct?
-    encoder->setDepthBias(rasterizer.depthBias, rasterizer.slopeScaledDepthBias, rasterizer.depthBiasClamp);
-    encoder->setTriangleFillMode(translateTriangleFillMode(rasterizer.fillMode));
-    // encoder->setBlendColor(); // not supported by rhi
-    if (m_useDepthStencil)
+    // The rasterizer and depth-stencil state come from the pipeline.
+    if (updatePipeline)
     {
-        encoder->setDepthStencilState(m_renderPipeline->m_depthStencilState.get());
+        const RasterizerDesc& rasterizer = m_renderPipeline->m_rasterizerDesc;
+        encoder->setFrontFacingWinding(translateWinding(rasterizer.frontFace));
+        encoder->setCullMode(translateCullMode(rasterizer.cullMode));
+        encoder->setDepthClipMode(
+            rasterizer.depthClipEnable ? MTL::DepthClipModeClip : MTL::DepthClipModeClamp
+        ); // TODO correct?
+        encoder->setDepthBias(rasterizer.depthBias, rasterizer.slopeScaledDepthBias, rasterizer.depthBiasClamp);
+        encoder->setTriangleFillMode(translateTriangleFillMode(rasterizer.fillMode));
+        // encoder->setBlendColor(); // not supported by rhi
+        if (m_useDepthStencil)
+        {
+            encoder->setDepthStencilState(m_renderPipeline->m_depthStencilState.get());
+        }
     }
 
     if (updateStencilRef)
@@ -703,8 +707,10 @@ void CommandRecorder::cmdSetRenderState(const commands::SetRenderState& cmd)
         encoder->setStencilReferenceValue(state.stencilRef);
     }
 
+    // RenderState is large, only copy it when it changed.
+    if (updateStencilRef || updateVertexBuffers || updateIndexBuffer || updateViewports || updateScissorRects)
+        m_renderState = state;
     m_renderStateValid = true;
-    m_renderState = state;
 }
 
 void CommandRecorder::cmdDraw(const commands::Draw& cmd)

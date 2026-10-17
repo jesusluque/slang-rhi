@@ -44,7 +44,6 @@ public:
     RefPtr<RenderPipelineImpl> m_renderPipeline;
 
     bool m_preparedRenderStateValid = false;
-    RenderState m_preparedRenderState;
     BindingDataImpl* m_preparedRenderBindingData = nullptr;
 
     bool m_computePassActive = false;
@@ -771,7 +770,6 @@ void CommandRecorder::prepareSetRenderState(const commands::SetRenderState& cmd)
     }
 
     m_preparedRenderStateValid = true;
-    m_preparedRenderState = state;
 }
 
 void CommandRecorder::cmdSetRenderState(const commands::SetRenderState& cmd)
@@ -902,8 +900,10 @@ void CommandRecorder::cmdSetRenderState(const commands::SetRenderState& cmd)
         api.vkCmdSetScissor(m_cmdBuffer, 0, state.scissorRectCount, scissorRects);
     }
 
+    // RenderState is large, only copy it when it changed.
+    if (updateStencilRef || updateVertexBuffers || updateIndexBuffer || updateViewports || updateScissorRects)
+        m_renderState = state;
     m_renderStateValid = true;
-    m_renderState = state;
 
     m_computeStateValid = false;
     m_computePipeline = nullptr;
