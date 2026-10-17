@@ -185,6 +185,10 @@ public:
 
     bool m_hasArgumentBufferTier2 = false;
 
+    /// Small buffer that timestamp blit passes write to, as Metal does not sample
+    /// counters for empty passes.
+    NS::SharedPtr<MTL::Buffer> m_timestampScratchBuffer;
+
     NS::SharedPtr<MTL::ResidencySet> m_residencySet;
     bool m_hasResidencySet = false;
     bool m_residencySetDirty = false;

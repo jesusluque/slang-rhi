@@ -93,6 +93,9 @@ public:
 
     BindingDataImpl* m_bindingData = nullptr;
 
+    CommandList* m_commandList = nullptr;
+    const CommandList::CommandSlot* m_currentCommand = nullptr;
+
     CommandRecorder(DeviceImpl* device)
         : m_device(device)
     {
@@ -145,6 +148,7 @@ public:
     MTL::ComputeCommandEncoder* getComputeCommandEncoder();
     MTL::AccelerationStructureCommandEncoder* getAccelerationStructureCommandEncoder();
     MTL::BlitCommandEncoder* getBlitCommandEncoder();
+    void setupRenderPassTimestamps(MTL::RenderPassDescriptor* renderPassDesc);
     void endCommandEncoder();
 };
 
@@ -154,9 +158,11 @@ Result CommandRecorder::record(CommandBufferImpl* commandBuffer)
     m_commandBuffer = commandBuffer->m_commandBuffer;
 
     CommandList& commandList = commandBuffer->m_commandList;
+    m_commandList = &commandList;
     auto command = commandList.getCommands();
     while (command)
     {
+        m_currentCommand = command;
 #define SLANG_RHI_COMMAND_EXECUTE_X(x)                                                                                 \
     case CommandID::x:                                                                                                 \
         cmd##x(commandList.getCommand<commands::x>(command));                                                          \
@@ -428,6 +434,15 @@ void CommandRecorder::cmdResolveQuery(const commands::ResolveQuery& cmd)
     QueryPoolImpl* queryPool = checked_cast<QueryPoolImpl*>(cmd.queryPool);
     BufferImpl* buffer = checked_cast<BufferImpl*>(cmd.buffer);
 
+    // Apple GPUs make counter samples taken at stage boundaries available only once the
+    // command buffer has completed, so resolving them on the GPU would read stale values.
+    // Use IQueryPool::getResult() instead.
+    if (queryPool->m_desc.type == QueryType::Timestamp)
+    {
+        NOT_SUPPORTED(ICommandEncoder, resolveQuery);
+        return;
+    }
+
     auto encoder = getBlitCommandEncoder();
     encoder->resolveCounters(
         queryPool->m_counterSampleBuffer.get(),
@@ -531,6 +546,8 @@ void CommandRecorder::cmdBeginRenderPass(const commands::BeginRenderPass& cmd)
     renderPassDesc->setRenderTargetHeight(height);
 
     m_useDepthStencil = desc.depthStencilAttachment != nullptr;
+
+    setupRenderPassTimestamps(renderPassDesc.get());
 
     getRenderCommandEncoder(renderPassDesc.get());
 
@@ -1018,13 +1035,105 @@ void CommandRecorder::cmdInsertDebugMarker(const commands::InsertDebugMarker& cm
 
 void CommandRecorder::cmdWriteTimestamp(const commands::WriteTimestamp& cmd)
 {
-    SLANG_UNUSED(cmd);
-    // auto encoder = getBlitCommandEncoder();
-    // encoder->sampleCountersInBuffer(
-    //     checked_cast<QueryPoolImpl*>(cmd.queryPool)->m_counterSampleBuffer.get(),
-    //     cmd.queryIndex,
-    //     true
-    // );
+    // Timestamps inside a render pass are attached to the pass in setupRenderPassTimestamps().
+    if (m_renderPassActive)
+        return;
+
+    // Apple GPUs only sample counters at stage boundaries, so end the current encoder and
+    // sample at the end of a separate blit pass. Metal does not sample counters for an empty
+    // pass, so the pass writes to a small scratch buffer.
+    endCommandEncoder();
+
+    QueryPoolImpl* queryPool = checked_cast<QueryPoolImpl*>(cmd.queryPool);
+    NS::SharedPtr<MTL::BlitPassDescriptor> blitPassDesc = NS::TransferPtr(MTL::BlitPassDescriptor::alloc()->init());
+    MTL::BlitPassSampleBufferAttachmentDescriptor* attachment = blitPassDesc->sampleBufferAttachments()->object(0);
+    attachment->setSampleBuffer(queryPool->m_counterSampleBuffer.get());
+    attachment->setStartOfEncoderSampleIndex(cmd.queryIndex);
+    attachment->setEndOfEncoderSampleIndex(MTL::CounterDontSample);
+
+    MTL::Fence* fence = m_commandBufferImpl->m_queue->m_queueFence.get();
+    MTL::BlitCommandEncoder* encoder = m_commandBuffer->blitCommandEncoder(blitPassDesc.get());
+    encoder->waitForFence(fence);
+    encoder->fillBuffer(m_device->m_timestampScratchBuffer.get(), NS::Range(0, 4), 0);
+    encoder->updateFence(fence);
+    encoder->endEncoding();
+}
+
+void CommandRecorder::setupRenderPassTimestamps(MTL::RenderPassDescriptor* renderPassDesc)
+{
+    // Apple GPUs only sample counters at stage boundaries, and a render pass can sample each
+    // query pool once per boundary. Timestamps written before the first draw of the pass are
+    // sampled at the start of the vertex and then the fragment stage, timestamps written after
+    // a draw at the end of the vertex and then the fragment stage.
+    static constexpr uint32_t kMaxSampleBufferAttachments = 4;
+    struct PoolSlots
+    {
+        QueryPoolImpl* queryPool;
+        uint32_t startCount;
+        uint32_t endCount;
+    };
+    short_vector<PoolSlots, kMaxSampleBufferAttachments> pools;
+    bool hasDrawn = false;
+    for (auto command = m_currentCommand->next; command && command->id != CommandID::EndRenderPass;
+         command = command->next)
+    {
+        switch (command->id)
+        {
+        case CommandID::Draw:
+        case CommandID::DrawIndexed:
+        case CommandID::DrawIndirect:
+        case CommandID::DrawIndexedIndirect:
+        case CommandID::DrawMeshTasks:
+            hasDrawn = true;
+            break;
+        case CommandID::WriteTimestamp:
+        {
+            const auto& cmd = m_commandList->getCommand<commands::WriteTimestamp>(command);
+            QueryPoolImpl* queryPool = checked_cast<QueryPoolImpl*>(cmd.queryPool);
+            uint32_t attachmentIndex = 0;
+            while (attachmentIndex < pools.size() && pools[attachmentIndex].queryPool != queryPool)
+                attachmentIndex++;
+            if (attachmentIndex == pools.size())
+            {
+                if (attachmentIndex >= kMaxSampleBufferAttachments)
+                {
+                    m_device->printWarning(
+                        "Metal can sample at most 4 query pools per render pass, ignoring timestamp."
+                    );
+                    break;
+                }
+                pools.push_back({queryPool, 0, 0});
+                renderPassDesc->sampleBufferAttachments()
+                    ->object(attachmentIndex)
+                    ->setSampleBuffer(queryPool->m_counterSampleBuffer.get());
+            }
+            PoolSlots& slots = pools[attachmentIndex];
+            MTL::RenderPassSampleBufferAttachmentDescriptor* attachment =
+                renderPassDesc->sampleBufferAttachments()->object(attachmentIndex);
+            uint32_t& count = hasDrawn ? slots.endCount : slots.startCount;
+            if (count >= 2)
+            {
+                m_device->printWarning(
+                    "Metal can sample at most 2 timestamps per query pool before and after the draws of a render "
+                    "pass, ignoring timestamp."
+                );
+                break;
+            }
+            if (!hasDrawn && count == 0)
+                attachment->setStartOfVertexSampleIndex(cmd.queryIndex);
+            else if (!hasDrawn)
+                attachment->setStartOfFragmentSampleIndex(cmd.queryIndex);
+            else if (count == 0)
+                attachment->setEndOfVertexSampleIndex(cmd.queryIndex);
+            else
+                attachment->setEndOfFragmentSampleIndex(cmd.queryIndex);
+            count++;
+            break;
+        }
+        default:
+            break;
+        }
+    }
 }
 
 void CommandRecorder::cmdExecuteCallback(const commands::ExecuteCallback& cmd)
@@ -1316,6 +1425,11 @@ Result CommandQueueImpl::submit(const SubmitDesc& desc)
         // Get command buffer, assign updated submission id and store in the in-flight list.
         CommandBufferImpl* commandBuffer = checked_cast<CommandBufferImpl*>(desc.commandBuffers[i]);
         commandBuffer->m_submissionID = m_lastSubmittedID;
+        for (const auto& queryWrite : commandBuffer->m_commandList.getQueryWrites())
+        {
+            checked_cast<QueryPool*>(queryWrite.queryPool)
+                ->markQueryRangeSubmitted(queryWrite.index, queryWrite.count, m_lastSubmittedID);
+        }
         m_commandBuffersInFlight.push_back(commandBuffer);
 
         // Signal fences if this is the last command buffer.

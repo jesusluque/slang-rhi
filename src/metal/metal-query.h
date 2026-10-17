@@ -4,6 +4,8 @@
 
 namespace rhi::metal {
 
+MTL::CounterSet* findCounterSet(MTL::Device* device, QueryType queryType);
+
 class QueryPoolImpl : public QueryPool
 {
 public:

@@ -1,5 +1,6 @@
 #include "metal-query.h"
 #include "metal-device.h"
+#include "metal-command.h"
 #include "metal-utils.h"
 
 namespace rhi::metal {
@@ -11,7 +12,7 @@ QueryPoolImpl::QueryPoolImpl(Device* device, const QueryPoolDesc& desc)
 
 QueryPoolImpl::~QueryPoolImpl() {}
 
-static MTL::CounterSet* findCounterSet(MTL::Device* device, QueryType queryType)
+MTL::CounterSet* findCounterSet(MTL::Device* device, QueryType queryType)
 {
     if (queryType != QueryType::Timestamp)
     {
@@ -66,12 +67,73 @@ Result QueryPoolImpl::init()
 
 Result QueryPoolImpl::getResultState(uint32_t queryIndex, uint32_t count, QueryResultState* outState)
 {
-    return SLANG_E_NOT_AVAILABLE;
+    if (!outState || !isValidQueryRange(queryIndex, count))
+    {
+        return SLANG_E_INVALID_ARG;
+    }
+
+    if (count == 0)
+    {
+        *outState = QueryResultState::Resolved;
+        return SLANG_OK;
+    }
+
+    QueryRangeInfo queryInfo = getQueryRangeInfo(queryIndex, count);
+    if (queryInfo.state != QueryResultState::Pending)
+    {
+        *outState = queryInfo.state;
+        return SLANG_OK;
+    }
+
+    DeviceImpl* device = getDevice<DeviceImpl>();
+    if (device->m_queue->updateLastFinishedID() < queryInfo.submissionID)
+    {
+        *outState = QueryResultState::Pending;
+        return SLANG_OK;
+    }
+
+    markQueryRangeResolved(queryIndex, count, queryInfo.submissionID);
+    *outState = QueryResultState::Resolved;
+    return SLANG_OK;
 }
 
 Result QueryPoolImpl::getResult(uint32_t queryIndex, uint32_t count, uint64_t* outData)
 {
-    return SLANG_E_NOT_AVAILABLE;
+    AUTORELEASEPOOL
+
+    if (!outData || !isValidQueryRange(queryIndex, count))
+    {
+        return SLANG_E_INVALID_ARG;
+    }
+
+    if (count == 0)
+    {
+        return SLANG_OK;
+    }
+
+    QueryRangeInfo queryInfo = getQueryRangeInfo(queryIndex, count);
+    if (queryInfo.state == QueryResultState::Reset)
+    {
+        return SLANG_FAIL;
+    }
+
+    // Wait for the submission that wrote the queries to finish.
+    DeviceImpl* device = getDevice<DeviceImpl>();
+    if (queryInfo.state == QueryResultState::Pending &&
+        device->m_queue->updateLastFinishedID() < queryInfo.submissionID)
+    {
+        SLANG_RETURN_ON_FAIL(device->m_queue->waitOnHost());
+    }
+
+    NS::Data* data = m_counterSampleBuffer->resolveCounterRange(NS::Range(queryIndex, count));
+    if (!data || data->length() < count * sizeof(uint64_t))
+    {
+        return SLANG_FAIL;
+    }
+    ::memcpy(outData, data->mutableBytes(), count * sizeof(uint64_t));
+
+    markQueryRangeResolved(queryIndex, count, queryInfo.submissionID);
+    return SLANG_OK;
 }
 
 } // namespace rhi::metal

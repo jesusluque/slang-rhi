@@ -261,6 +261,19 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
         addFeature(Feature::ResidencySet);
     }
 
+    // Timestamps are only sampled at stage boundaries on Apple GPUs, where they are in nanoseconds.
+    if (m_device->supportsFamily(MTL::GPUFamilyApple7) &&
+        m_device->supportsCounterSampling(MTL::CounterSamplingPointAtStageBoundary) &&
+        findCounterSet(m_device.get(), QueryType::Timestamp))
+    {
+        m_timestampScratchBuffer = NS::TransferPtr(m_device->newBuffer(16, MTL::ResourceStorageModePrivate));
+        if (m_timestampScratchBuffer)
+        {
+            addFeature(Feature::TimestampQuery);
+            m_info.timestampFrequency = 1000000000;
+        }
+    }
+
     addCapability(Capability::metal);
     const auto osVersion = NS::ProcessInfo::processInfo()->operatingSystemVersion();
     if (osVersion.majorVersion >= 11)

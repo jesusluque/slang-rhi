@@ -246,6 +246,58 @@ GPU_TEST_CASE("cmd-query-render-pass-timestamps", D3D11 | D3D12 | Vulkan | Metal
     }
 }
 
+GPU_TEST_CASE("cmd-query-compute-pass-timestamps", Vulkan | Metal | WGPU)
+{
+    if (!device->hasFeature(Feature::TimestampQuery))
+        SKIP("Timestamp queries not supported");
+
+    ComPtr<IShaderProgram> shaderProgram;
+    REQUIRE_CALL(loadProgram(device, "test-compute-trivial", "computeMain", shaderProgram.writeRef()));
+    ComputePipelineDesc pipelineDesc = {};
+    pipelineDesc.program = shaderProgram.get();
+    ComPtr<IComputePipeline> pipeline;
+    REQUIRE_CALL(device->createComputePipeline(pipelineDesc, pipeline.writeRef()));
+
+    float initialData[] = {0.0f, 1.0f, 2.0f, 3.0f};
+    BufferDesc bufferDesc = {};
+    bufferDesc.size = sizeof(initialData);
+    bufferDesc.elementSize = sizeof(float);
+    bufferDesc.usage = BufferUsage::ShaderResource | BufferUsage::UnorderedAccess | BufferUsage::CopySource;
+    bufferDesc.defaultState = ResourceState::UnorderedAccess;
+    ComPtr<IBuffer> buffer;
+    REQUIRE_CALL(device->createBuffer(bufferDesc, initialData, buffer.writeRef()));
+
+    auto pool = createTimestampQueryPool(device, 4);
+    auto queue = device->getQueue(QueueType::Graphics);
+    auto encoder = queue->createCommandEncoder();
+    encoder->writeTimestamp(pool, 0);
+    auto pass = encoder->beginComputePass();
+    pass->writeTimestamp(pool, 1);
+    for (uint32_t i = 0; i < 2; ++i)
+    {
+        auto rootObject = pass->bindPipeline(pipeline);
+        ShaderCursor cursor(rootObject);
+        cursor["buffer"].setBinding(buffer);
+        cursor["value"].setData(0.0f);
+        pass->dispatchCompute(1, 1, 1);
+        if (i == 0)
+            pass->writeTimestamp(pool, 2);
+    }
+    pass->end();
+    encoder->writeTimestamp(pool, 3);
+    REQUIRE_CALL(queue->submit(encoder->finish()));
+    REQUIRE_CALL(queue->waitOnHost());
+
+    uint64_t values[4] = {};
+    REQUIRE_CALL(pool->getResult(0, 4, values));
+    CHECK(values[0] > 0);
+    for (uint32_t i = 1; i < 4; ++i)
+        CHECK(values[i] >= values[i - 1]);
+
+    // Splitting the compute pass must not lose the dispatches.
+    compareComputeResult(device, buffer, makeArray<float>(2.0f, 3.0f, 4.0f, 5.0f));
+}
+
 GPU_TEST_CASE("cmd-query-result-readiness", ALL)
 {
     if (!device->hasFeature(Feature::TimestampQuery))
@@ -516,8 +568,12 @@ GPU_TEST_CASE("cmd-query-d3d12-get-result-requires-submission", D3D12)
     REQUIRE_CALL(queryPool->getResult(0, 1, &timestamp));
 }
 
-GPU_TEST_CASE("cmd-query-resolve-device", ALL & ~(D3D11 | CPU | CUDA))
+// Metal: timestamps sampled at stage boundaries are only available once the command buffer
+// has completed, so they can't be resolved into a buffer on the GPU.
+GPU_TEST_CASE("cmd-query-resolve-device", ALL & ~(D3D11 | CPU | CUDA | Metal))
 {
+    if (device->getDeviceType() == DeviceType::Vulkan && SLANG_APPLE_FAMILY)
+        SKIP("timestamps can't be resolved on the GPU on MoltenVK");
     if (!device->hasFeature(Feature::TimestampQuery))
     {
         SKIP("Timestamp queries not supported");

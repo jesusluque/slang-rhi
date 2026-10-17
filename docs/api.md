@@ -185,10 +185,10 @@ Entry-point-scoped descriptors return `SLANG_E_NOT_IMPLEMENTED` at program creat
 | API                         | CPU | CUDA | D3D11 | D3D12 | Vulkan | Metal | WGPU |
 |-----------------------------|-----|------|-------|-------|--------|-------|------|
 | `getDesc`                   | yes | yes  | yes   | yes   | yes    | yes   | yes  |
-| `getResultState`            | yes | yes  | yes   | yes   | yes    | :x:   | :x:  |
-| `getResult`                 | yes | yes  | yes   | yes   | yes    | :x:   | :x:  |
-| `reset`                     | yes | yes  | yes   | yes   | yes    | :x:   | :x:  |
-| `reset(queryIndex, count)`  | yes | yes  | yes   | yes   | yes    | :x:   | :x:  |
+| `getResultState`            | yes | yes  | yes   | yes   | yes    | yes   | :x:  |
+| `getResult`                 | yes | yes  | yes   | yes   | yes    | yes   | :x:  |
+| `reset`                     | yes | yes  | yes   | yes   | yes    | yes   | :x:  |
+| `reset(queryIndex, count)`  | yes | yes  | yes   | yes   | yes    | yes   | :x:  |
 
 ## `ICommandEncoder` interface
 
@@ -209,7 +209,7 @@ Entry-point-scoped descriptors return `SLANG_E_NOT_IMPLEMENTED` at program creat
 | `clearTextureUint`                     | :x: | yes  | yes   | yes   | yes    | yes   | :x:  |
 | `clearTextureSint`                     | :x: | yes  | yes   | yes   | yes    | yes   | :x:  |
 | `clearTextureDepthStencil`             | :x: | :x:  | yes   | yes   | yes    | yes   | :x:  |
-| `resolveQuery`                         | yes | :x:  | :x:   | yes   | yes    | yes   | :x:  |
+| `resolveQuery`                         | yes | :x:  | :x:   | yes   | yes    | :x:   | :x:  |
 | `buildAccelerationStructure`           | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
 | `buildMicromap`                        | :x: | yes  | :x:   | yes   | yes    | :x:   | :x:  |
 | `copyAccelerationStructure`            | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
@@ -222,7 +222,7 @@ Entry-point-scoped descriptors return `SLANG_E_NOT_IMPLEMENTED` at program creat
 | `pushDebugGroup`                       | :x: | :x:  | :x:   | yes   | yes    | yes   | yes  |
 | `popDebugGroup`                        | :x: | :x:  | :x:   | yes   | yes    | yes   | yes  |
 | `insertDebugMarker`                    | :x: | :x:  | :x:   | yes   | yes    | yes   | yes  |
-| `writeTimestamp`                       | yes | yes  | yes   | yes   | yes    | :x:   | :x:  |
+| `writeTimestamp`                       | yes | yes  | yes   | yes   | yes    | yes   | :x:  |
 | `finish`                               | yes | yes  | yes   | yes   | yes    | yes   | yes  |
 | `getNativeHandle`                      | :x: | :x:  | :x:   | :x:   | :x:    | :x:   | :x:  |
 
