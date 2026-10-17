@@ -57,6 +57,8 @@
 
 namespace rhi {
 
+class Pipeline;
+
 struct BindingData;
 class ExtendedShaderObjectTypeListObject;
 
@@ -466,6 +468,8 @@ public:
     const CommandSlot* getCommands() const { return m_commandSlots; }
     const QueryWriteRangeList& getQueryWrites() const { return m_queryWrites; }
     bool writesTimestamp() const { return m_writesTimestamp; }
+    /// True if a virtual pipeline was written, which needs to be resolved before recording.
+    bool hasVirtualPipelines() const { return m_hasVirtualPipelines; }
 
     template<typename T>
     T& getCommand(const CommandSlot* command)
@@ -514,6 +518,9 @@ private:
     CommandSlot* m_lastCommandSlot = nullptr;
     QueryWriteRangeList m_queryWrites;
     bool m_writesTimestamp = false;
+    bool m_hasVirtualPipelines = false;
+
+    void trackPipeline(Pipeline* pipeline);
 
     void trackQueryWrite(IQueryPool* queryPool, uint32_t index, uint32_t count);
 

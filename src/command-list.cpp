@@ -14,12 +14,19 @@ CommandList::CommandList(
 {
 }
 
+void CommandList::trackPipeline(Pipeline* pipeline)
+{
+    if (pipeline && pipeline->isVirtual())
+        m_hasVirtualPipelines = true;
+}
+
 void CommandList::reset()
 {
     m_commandSlots = nullptr;
     m_lastCommandSlot = nullptr;
     m_queryWrites.clear();
     m_writesTimestamp = false;
+    m_hasVirtualPipelines = false;
 }
 
 void CommandList::write(commands::CopyBuffer&& cmd)
@@ -114,6 +121,7 @@ void CommandList::write(commands::SetRenderState&& cmd)
     //     retainResource<Buffer>(cmd.state.vertexBuffers[i].buffer);
     // retainResource<Buffer>(cmd.state.indexBuffer.buffer);
     retainResource<RenderPipeline>(cmd.pipeline);
+    trackPipeline(checked_cast<RenderPipeline*>(cmd.pipeline));
     writeCommand(std::move(cmd));
 }
 
@@ -159,6 +167,7 @@ void CommandList::write(commands::EndComputePass&& cmd)
 void CommandList::write(commands::SetComputeState&& cmd)
 {
     retainResource<ComputePipeline>(cmd.pipeline);
+    trackPipeline(checked_cast<ComputePipeline*>(cmd.pipeline));
     writeCommand(std::move(cmd));
 }
 
@@ -186,6 +195,7 @@ void CommandList::write(commands::EndRayTracingPass&& cmd)
 void CommandList::write(commands::SetRayTracingState&& cmd)
 {
     retainResource<RayTracingPipeline>(cmd.pipeline);
+    trackPipeline(checked_cast<RayTracingPipeline*>(cmd.pipeline));
     retainResource<ShaderTable>(cmd.shaderTable);
     writeCommand(std::move(cmd));
 }
