@@ -150,7 +150,7 @@ GPU_TEST_CASE("buffer-no-barrier-race-condition", ALL)
 }
 #endif
 
-GPU_TEST_CASE("buffer-global-barrier", D3D12 | Vulkan)
+GPU_TEST_CASE("buffer-global-barrier", D3D12 | Vulkan | Metal)
 {
     Shader programA;
     Shader programB;

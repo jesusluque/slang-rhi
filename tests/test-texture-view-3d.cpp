@@ -190,7 +190,7 @@ struct TestTextureViews
     }
 };
 
-GPU_TEST_CASE("texture-view-3d", D3D12 | Vulkan | CUDA)
+GPU_TEST_CASE("texture-view-3d", D3D12 | Vulkan | Metal | CUDA)
 {
     TestTextureViews test;
     test.init(device);

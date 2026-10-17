@@ -496,6 +496,8 @@ GPU_TEST_CASE("texture-types-shader", D3D12 | Vulkan | Metal | WGPU)
     }
 }
 
+// Metal: 1D render targets are not supported, and a 3D render target only clears
+// the bound depth plane, while the test expects every slice to be cleared.
 GPU_TEST_CASE("texture-types-render-target", D3D12 | Vulkan)
 {
     TextureType textureTypes[] = {

@@ -218,7 +218,7 @@ Entry-point-scoped descriptors return `SLANG_E_NOT_IMPLEMENTED` at program creat
 | `convertCooperativeVectorMatrix`       | :x: | yes  | :x:   | yes   | yes    | :x:   | :x:  |
 | `setBufferState`                       | :x: | :x:  | :x:   | yes   | yes    | :x:   | :x:  |
 | `setTextureState`                      | :x: | :x:  | :x:   | yes   | yes    | :x:   | :x:  |
-| `globalBarrier`                        | :x: | :x:  | :x:   | yes   | yes    | :x:   | :x:  |
+| `globalBarrier`                        | :x: | :x:  | :x:   | yes   | yes    | yes   | :x:  |
 | `pushDebugGroup`                       | :x: | :x:  | :x:   | yes   | yes    | yes   | yes  |
 | `popDebugGroup`                        | :x: | :x:  | :x:   | yes   | yes    | yes   | yes  |
 | `insertDebugMarker`                    | :x: | :x:  | :x:   | yes   | yes    | yes   | yes  |

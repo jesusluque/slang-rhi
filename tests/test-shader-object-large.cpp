@@ -27,6 +27,7 @@ inline ComPtr<ITexture> createTexture(IDevice* device, float value)
     return texture;
 }
 
+// Metal: the shader uses more buffer bindings than the 31 slots Metal provides.
 GPU_TEST_CASE("shader-object-large", D3D12 | Vulkan)
 {
     ComPtr<IShaderProgram> shaderProgram;
