@@ -144,7 +144,7 @@ ComPtr<IBuffer> createBuffer(IDevice* device, uint32_t size)
     return buffer;
 }
 
-GPU_TEST_CASE("heap-create", CUDA | Vulkan)
+GPU_TEST_CASE("heap-create", CUDA | Vulkan | Metal)
 {
     HeapDesc desc;
     desc.memoryType = MemoryType::DeviceLocal;
@@ -153,7 +153,7 @@ GPU_TEST_CASE("heap-create", CUDA | Vulkan)
     REQUIRE_CALL(device->createHeap(desc, heap.writeRef()));
 }
 
-GPU_TEST_CASE("heap-allocate", CUDA | Vulkan)
+GPU_TEST_CASE("heap-allocate", CUDA | Vulkan | Metal)
 {
     HeapDesc desc;
     desc.memoryType = MemoryType::DeviceLocal;
@@ -303,7 +303,7 @@ struct AllocationInfo
     uint32_t pattern;
 };
 
-GPU_TEST_CASE("heap-pointer-stress-test", CUDA | Vulkan)
+GPU_TEST_CASE("heap-pointer-stress-test", CUDA | Vulkan | Metal)
 {
     ComputePipelineDesc pipelineDesc = {};
 
@@ -419,7 +419,7 @@ bool allocationsOverlap(const HeapAlloc& a, const HeapAlloc& b)
     return !(aEnd <= bStart || bEnd <= aStart);
 }
 
-GPU_TEST_CASE("heap-no-overlaps", CUDA | Vulkan)
+GPU_TEST_CASE("heap-no-overlaps", CUDA | Vulkan | Metal)
 {
     HeapDesc desc;
     desc.memoryType = MemoryType::DeviceLocal;
@@ -462,7 +462,7 @@ GPU_TEST_CASE("heap-no-overlaps", CUDA | Vulkan)
     }
 }
 
-GPU_TEST_CASE("heap-alloc-free-no-overlaps", CUDA | Vulkan)
+GPU_TEST_CASE("heap-alloc-free-no-overlaps", CUDA | Vulkan | Metal)
 {
     HeapDesc desc;
     desc.memoryType = MemoryType::DeviceLocal;
@@ -514,7 +514,7 @@ GPU_TEST_CASE("heap-alloc-free-no-overlaps", CUDA | Vulkan)
     }
 }
 
-GPU_TEST_CASE("heap-alignment-sizes", CUDA | Vulkan)
+GPU_TEST_CASE("heap-alignment-sizes", CUDA | Vulkan | Metal)
 {
     HeapDesc desc;
     desc.memoryType = MemoryType::DeviceLocal;
@@ -735,7 +735,7 @@ GPU_TEST_CASE("heap-multiple-submits-pending-frees", Vulkan)
     }
 }
 
-GPU_TEST_CASE("heap-fragmentation-test", CUDA | Vulkan)
+GPU_TEST_CASE("heap-fragmentation-test", CUDA | Vulkan | Metal)
 {
     HeapDesc desc;
     desc.memoryType = MemoryType::DeviceLocal;

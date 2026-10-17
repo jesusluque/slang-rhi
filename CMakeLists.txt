@@ -946,6 +946,7 @@ if(SLANG_RHI_ENABLE_METAL)
         src/metal/metal-command.cpp
         src/metal/metal-device.cpp
         src/metal/metal-fence.cpp
+        src/metal/metal-heap.cpp
         src/metal/metal-input-layout.cpp
         src/metal/metal-pipeline.cpp
         src/metal/metal-query.cpp

@@ -93,6 +93,7 @@ public:
         const RayTracingPipelineDesc& desc,
         IRayTracingPipeline** outPipeline
     ) override;
+    virtual SLANG_NO_THROW Result SLANG_MCALL createHeap(const HeapDesc& desc, IHeap** outHeap) override;
     virtual SLANG_NO_THROW Result SLANG_MCALL createQueryPool(const QueryPoolDesc& desc, IQueryPool** outPool) override;
 
     // Metal uses the generic implementation for now. But it might be worth bringing back the specific implementation

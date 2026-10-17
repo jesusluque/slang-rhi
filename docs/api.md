@@ -43,7 +43,7 @@
 | `createMicromap`                   | :x:     | yes  | :x:   | yes   | yes    | :x:     | :x:  |
 | `createFence`                      | yes     | yes  | :x:   | yes   | yes    | yes     | yes  |
 | `waitForFences`                    | yes     | yes  | :x:   | yes   | yes    | yes     | yes  |
-| `createHeap`                       | :x:     | yes  | :x:   | yes   | yes    | :x:     | :x:  |
+| `createHeap`                       | :x:     | yes  | :x:   | yes   | yes    | yes     | :x:  |
 | `getTextureAllocationInfo`         | yes     | yes  | :x:   | yes   | yes    | yes     | :x:  |
 | `getTextureRowAlignment`           | yes     | yes  | :x:   | yes   | yes    | yes     | yes  |
 | `getCooperativeVectorProperties`   | :x:     | yes  | :x:   | yes   | yes    | :x:     | :x:  |
@@ -313,11 +313,11 @@ Note: CUDA's surface is implemented using a Vulkan swapchain.
 
 | API                | CPU | CUDA | D3D11 | D3D12 | Vulkan | Metal | WGPU |
 |--------------------|-----|------|-------|-------|--------|-------|------|
-| `allocate`         | :x: | yes  | :x:   | yes   | yes    | :x:   | :x:  |
-| `free`             | :x: | yes  | :x:   | yes   | yes    | :x:   | :x:  |
-| `report`           | :x: | yes  | :x:   | yes   | yes    | :x:   | :x:  |
-| `flush`            | :x: | yes  | :x:   | yes   | yes    | :x:   | :x:  |
-| `removeEmptyPages` | :x: | yes  | :x:   | yes   | yes    | :x:   | :x:  |
+| `allocate`         | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
+| `free`             | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
+| `report`           | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
+| `flush`            | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
+| `removeEmptyPages` | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
 
 ## OptiX callable stack limits
 
