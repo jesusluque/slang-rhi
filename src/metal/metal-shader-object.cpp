@@ -14,6 +14,12 @@ inline Result setBuffer(BindingDataImpl* bindingData, uint32_t index, MTL::Buffe
     {
         return SLANG_FAIL;
     }
+    // Clear the slots skipped since the last binding, they are bound as part of the range.
+    for (uint32_t i = bindingData->bufferCount; i < index; ++i)
+    {
+        bindingData->buffers[i] = nullptr;
+        bindingData->bufferOffsets[i] = 0;
+    }
     bindingData->bufferCount = max(bindingData->bufferCount, index + 1);
     bindingData->buffers[index] = buffer;
     bindingData->bufferOffsets[index] = offset;
@@ -25,6 +31,10 @@ inline Result setTexture(BindingDataImpl* bindingData, uint32_t index, MTL::Text
     if (index >= bindingData->textureCapacity)
     {
         return SLANG_FAIL;
+    }
+    for (uint32_t i = bindingData->textureCount; i < index; ++i)
+    {
+        bindingData->textures[i] = nullptr;
     }
     bindingData->textureCount = max(bindingData->textureCount, index + 1);
     bindingData->textures[index] = texture;
@@ -63,19 +73,17 @@ Result BindingDataBuilder::bindAsRoot(
     BindingDataImpl* bindingData = m_allocator->allocate<BindingDataImpl>();
     m_bindingData = bindingData;
 
-    // TODO(shaderobject): we should count number of buffers/textures in the layout and allocate appropriately
-    // then we could switch to asserts instead of error checks when writing binding data
-    m_bindingData->bufferCapacity = 256;
-    m_bindingData->textureCapacity = 256;
+    // The capacities match the sizes of Metal's argument tables (31 buffers and 128 textures).
+    // Slots are cleared lazily by setBuffer() and setTexture(), since this runs for every
+    // bind and usually only a few slots are used.
+    m_bindingData->bufferCapacity = 31;
+    m_bindingData->textureCapacity = 128;
     m_bindingData->bufferCount = 0;
     m_bindingData->buffers = m_allocator->allocate<MTL::Buffer*>(m_bindingData->bufferCapacity);
-    ::memset(m_bindingData->buffers, 0, sizeof(MTL::Buffer*) * m_bindingData->bufferCapacity);
     m_bindingData->bufferOffsets = m_allocator->allocate<NS::UInteger>(m_bindingData->bufferCapacity);
-    ::memset(m_bindingData->bufferOffsets, 0, sizeof(NS::UInteger) * m_bindingData->bufferCapacity);
 
     m_bindingData->textureCount = 0;
     m_bindingData->textures = m_allocator->allocate<MTL::Texture*>(m_bindingData->textureCapacity);
-    ::memset(m_bindingData->textures, 0, sizeof(MTL::Texture*) * m_bindingData->textureCapacity);
 
     uint32_t samplerCount = specializedLayout->getTotalSamplerCount();
     m_bindingData->samplerCount = samplerCount;
