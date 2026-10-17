@@ -7,6 +7,8 @@
 
 namespace rhi::metal {
 
+struct UploadAllocation;
+
 struct BindingDataBuilder
 {
     DeviceImpl* m_device;
@@ -62,7 +64,7 @@ struct BindingDataBuilder
     Result writeArgumentBuffer(
         ShaderObject* shaderObject,
         ShaderObjectLayoutImpl* specializedLayout,
-        BufferImpl*& outArgumentBuffer
+        UploadAllocation& outArgumentBuffer
     );
 
     Result writeOrdinaryDataIntoArgumentBuffer(
@@ -103,11 +105,35 @@ struct BindingDataImpl : BindingData
     uint32_t rootAccelerationStructureCapacity;
 };
 
+/// A sub-allocation of upload memory used for constant and argument buffers.
+struct UploadAllocation
+{
+    BufferImpl* buffer = nullptr;
+    NS::UInteger offset = 0;
+    uint8_t* data = nullptr;
+    uint64_t deviceAddress = 0;
+};
+
 struct BindingCache
 {
+    /// Buffers referenced by the binding data, kept alive until the command buffer is reset.
     std::vector<InternalRefPtr<BufferImpl>> buffers;
 
-    void reset() { buffers.clear(); }
+    /// Pages of upload memory that constant and argument buffers are sub-allocated from.
+    /// Creating a Metal buffer for every bind is expensive, so the pages are kept and
+    /// reused once the command buffer is reset (after the GPU has finished with it).
+    std::vector<InternalRefPtr<BufferImpl>> uploadPages;
+    size_t uploadPageIndex = 0;
+    size_t uploadPageOffset = 0;
+
+    Result allocateUpload(DeviceImpl* device, size_t size, UploadAllocation& outAllocation);
+
+    void reset()
+    {
+        buffers.clear();
+        uploadPageIndex = 0;
+        uploadPageOffset = 0;
+    }
 };
 
 } // namespace rhi::metal

@@ -198,12 +198,14 @@ Result BindingDataBuilder::bindAsParameterBlock(
     if (!m_device->m_hasArgumentBufferTier2)
         return SLANG_FAIL;
 
-    BufferImpl* argumentBuffer = nullptr;
+    UploadAllocation argumentBuffer;
     SLANG_RETURN_ON_FAIL(writeArgumentBuffer(shaderObject, specializedLayout, argumentBuffer));
 
-    if (argumentBuffer)
+    if (argumentBuffer.buffer)
     {
-        SLANG_RETURN_ON_FAIL(setBuffer(m_bindingData, inOffset.buffer, argumentBuffer->m_buffer.get()));
+        SLANG_RETURN_ON_FAIL(
+            setBuffer(m_bindingData, inOffset.buffer, argumentBuffer.buffer->m_buffer.get(), argumentBuffer.offset)
+        );
     }
 
     return SLANG_OK;
@@ -418,14 +420,8 @@ Result BindingDataBuilder::bindOrdinaryDataBufferIfNeeded(
     if (size == 0)
         return SLANG_OK;
 
-    ComPtr<IBuffer> buffer;
-    BufferDesc bufferDesc = {};
-    bufferDesc.size = size;
-    bufferDesc.usage = BufferUsage::ConstantBuffer | BufferUsage::CopyDestination;
-    bufferDesc.defaultState = ResourceState::ConstantBuffer;
-    bufferDesc.memoryType = MemoryType::Upload;
-    SLANG_RETURN_ON_FAIL(m_device->createBuffer(bufferDesc, nullptr, buffer.writeRef()));
-    auto bufferImpl = checked_cast<BufferImpl*>(buffer.get());
+    UploadAllocation allocation;
+    SLANG_RETURN_ON_FAIL(m_bindingCache->allocateUpload(m_device, size, allocation));
 
     // Once the buffer is allocated, we can use `_writeOrdinaryData` to fill it in.
     //
@@ -433,17 +429,15 @@ Result BindingDataBuilder::bindOrdinaryDataBufferIfNeeded(
     // where this object contains interface/existential-type fields, so we
     // don't need or want to inline it into this call site.
     //
-    void* ordinaryData = bufferImpl->m_buffer->contents();
-    SLANG_RETURN_ON_FAIL(shaderObject->writeOrdinaryData(ordinaryData, size, specializedLayout));
+    SLANG_RETURN_ON_FAIL(shaderObject->writeOrdinaryData(allocation.data, size, specializedLayout));
 
     // If we did indeed need/create a buffer, then we must bind it
     // into root binding state.
     //
-    SLANG_RETURN_ON_FAIL(setBuffer(m_bindingData, ioOffset.buffer, bufferImpl->m_buffer.get()));
+    SLANG_RETURN_ON_FAIL(
+        setBuffer(m_bindingData, ioOffset.buffer, allocation.buffer->m_buffer.get(), allocation.offset)
+    );
     ioOffset.buffer++;
-
-    // Pass ownership of the buffer to the binding cache.
-    m_bindingCache->buffers.push_back(bufferImpl);
 
     SLANG_RETURN_ON_FAIL(resolvePointerFieldResidency(shaderObject, specializedLayout));
 
@@ -453,7 +447,7 @@ Result BindingDataBuilder::bindOrdinaryDataBufferIfNeeded(
 Result BindingDataBuilder::writeArgumentBuffer(
     ShaderObject* shaderObject,
     ShaderObjectLayoutImpl* specializedLayout,
-    BufferImpl*& outArgumentBuffer
+    UploadAllocation& outArgumentBuffer
 )
 {
     auto argumentBufferTypeLayout = specializedLayout->getParameterBlockTypeLayout();
@@ -462,26 +456,20 @@ Result BindingDataBuilder::writeArgumentBuffer(
     // empty struct type in AST. We need to handle this correctly.
     if (argumentBufferTypeLayout->getFieldCount() == 0)
     {
-        outArgumentBuffer = nullptr;
+        outArgumentBuffer = {};
         return SLANG_OK;
     }
 
-    ComPtr<IBuffer> argumentBuffer;
-    BufferDesc argumentBufferDesc = {};
-    argumentBufferDesc.size = argumentBufferTypeLayout->getSize();
-    argumentBufferDesc.usage = BufferUsage::ConstantBuffer | BufferUsage::CopyDestination;
-    argumentBufferDesc.defaultState = ResourceState::ConstantBuffer;
-    argumentBufferDesc.memoryType = MemoryType::Upload;
-    SLANG_RETURN_ON_FAIL(m_device->createBuffer(argumentBufferDesc, nullptr, argumentBuffer.writeRef()));
-    auto argumentBufferImpl = checked_cast<BufferImpl*>(argumentBuffer.get());
+    UploadAllocation argumentBuffer;
+    SLANG_RETURN_ON_FAIL(m_bindingCache->allocateUpload(m_device, argumentBufferTypeLayout->getSize(), argumentBuffer));
 
-    memcpy(argumentBufferImpl->m_buffer->contents(), shaderObject->m_data.data(), shaderObject->m_data.size());
+    memcpy(argumentBuffer.data, shaderObject->m_data.data(), shaderObject->m_data.size());
 
     // Once the buffer is allocated, we can fill it in with the uniform data
     // and resource bindings we have tracked, using `argumentBufferTypeLayout` to obtain
     // the offsets for each field.
     //
-    uint8_t* argumentData = (uint8_t*)argumentBufferImpl->m_buffer->contents();
+    uint8_t* argumentData = argumentBuffer.data;
 
     // Write all ordinary data early to prevent overwriting gpu-addresses
     // we write below.
@@ -630,13 +618,13 @@ Result BindingDataBuilder::writeArgumentBuffer(
             for (uint32_t i = 0; i < count; ++i)
             {
                 auto subObject = shaderObject->m_objects[subObjectIndex + i];
-                BufferImpl* subArgumentBuffer = nullptr;
+                UploadAllocation subArgumentBuffer;
                 SLANG_RETURN_ON_FAIL(writeArgumentBuffer(subObject, subObjectLayout, subArgumentBuffer));
-                DeviceAddress bufferPtr = subArgumentBuffer->m_buffer->gpuAddress();
+                DeviceAddress bufferPtr = subArgumentBuffer.deviceAddress;
                 memcpy(argumentPtr + i * sizeof(uint64_t), &bufferPtr, sizeof(bufferPtr));
-                if (!m_device->m_hasResidencySet)
+                if (!m_device->m_hasResidencySet && subArgumentBuffer.buffer)
                 {
-                    SLANG_RETURN_ON_FAIL(addUsedResource(m_bindingData, subArgumentBuffer->m_buffer.get()));
+                    SLANG_RETURN_ON_FAIL(addUsedResource(m_bindingData, subArgumentBuffer.buffer->m_buffer.get()));
                 }
             }
             break;
@@ -648,10 +636,7 @@ Result BindingDataBuilder::writeArgumentBuffer(
 
     SLANG_RETURN_ON_FAIL(resolvePointerFieldResidency(shaderObject, specializedLayout));
 
-    // Pass ownership of the buffer to the binding cache.
-    m_bindingCache->buffers.push_back(argumentBufferImpl);
-
-    outArgumentBuffer = argumentBufferImpl;
+    outArgumentBuffer = argumentBuffer;
     return SLANG_OK;
 }
 
@@ -748,6 +733,63 @@ Result BindingDataBuilder::resolvePointerFieldResidency(
             );
         }
     }
+    return SLANG_OK;
+}
+
+Result BindingCache::allocateUpload(DeviceImpl* device, size_t size, UploadAllocation& outAllocation)
+{
+    // Offsets are aligned to 256 bytes, the strictest buffer offset alignment Metal requires
+    // (constant buffers on Mac2 family GPUs). Sizes are rounded up to 16 bytes as Metal validates
+    // that a bound buffer covers the aligned size of the argument struct.
+    static constexpr size_t kPageSize = 256 * 1024;
+    static constexpr size_t kOffsetAlignment = 256;
+    size = math::calcAligned2(size, 16);
+
+    auto createBuffer = [&](size_t bufferSize, InternalRefPtr<BufferImpl>& outBuffer) -> Result
+    {
+        BufferDesc bufferDesc = {};
+        bufferDesc.size = bufferSize;
+        bufferDesc.usage = BufferUsage::ConstantBuffer | BufferUsage::CopyDestination;
+        bufferDesc.defaultState = ResourceState::ConstantBuffer;
+        bufferDesc.memoryType = MemoryType::Upload;
+        ComPtr<IBuffer> buffer;
+        SLANG_RETURN_ON_FAIL(device->createBuffer(bufferDesc, nullptr, buffer.writeRef()));
+        outBuffer = checked_cast<BufferImpl*>(buffer.get());
+        return SLANG_OK;
+    };
+
+    BufferImpl* buffer = nullptr;
+    size_t offset = 0;
+    if (size > kPageSize)
+    {
+        // Large allocations get a dedicated buffer that is released on reset.
+        InternalRefPtr<BufferImpl> dedicated;
+        SLANG_RETURN_ON_FAIL(createBuffer(size, dedicated));
+        buffers.push_back(dedicated);
+        buffer = dedicated;
+    }
+    else
+    {
+        if (uploadPageIndex < uploadPages.size() && uploadPageOffset + size > kPageSize)
+        {
+            uploadPageIndex++;
+            uploadPageOffset = 0;
+        }
+        if (uploadPageIndex == uploadPages.size())
+        {
+            InternalRefPtr<BufferImpl> page;
+            SLANG_RETURN_ON_FAIL(createBuffer(kPageSize, page));
+            uploadPages.push_back(page);
+        }
+        buffer = uploadPages[uploadPageIndex];
+        offset = uploadPageOffset;
+        uploadPageOffset = math::calcAligned2(uploadPageOffset + size, kOffsetAlignment);
+    }
+
+    outAllocation.buffer = buffer;
+    outAllocation.offset = offset;
+    outAllocation.data = (uint8_t*)buffer->m_buffer->contents() + offset;
+    outAllocation.deviceAddress = buffer->m_buffer->gpuAddress() + offset;
     return SLANG_OK;
 }
 
