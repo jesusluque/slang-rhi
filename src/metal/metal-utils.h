@@ -94,4 +94,14 @@ inline MTL::ResourceOptions makeResourceOptions(
     return storageMode | cpuCacheMode | MTL::ResourceHazardTrackingModeUntracked;
 }
 
+/// Wait for a command buffer uploading initial resource data to complete, then release it.
+inline void waitForPendingUpload(NS::SharedPtr<MTL::CommandBuffer>& pendingUpload)
+{
+    if (pendingUpload)
+    {
+        pendingUpload->waitUntilCompleted();
+        pendingUpload.reset();
+    }
+}
+
 } // namespace rhi::metal

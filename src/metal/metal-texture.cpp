@@ -33,6 +33,7 @@ void TextureImpl::deleteThis()
 
 Result TextureImpl::getNativeHandle(NativeHandle* outHandle)
 {
+    waitForPendingUpload(m_pendingUpload);
     outHandle->type = NativeHandleType::MTLTexture;
     outHandle->value = (uint64_t)m_texture.get();
     return SLANG_OK;
@@ -52,6 +53,7 @@ TextureViewImpl::TextureViewImpl(TextureImpl* texture, const TextureViewDesc& de
 
 Result TextureViewImpl::getNativeHandle(NativeHandle* outHandle)
 {
+    waitForPendingUpload(m_texture->m_pendingUpload);
     outHandle->type = NativeHandleType::MTLTexture;
     outHandle->value = (uint64_t)m_textureView.get();
     return SLANG_OK;
@@ -202,7 +204,8 @@ Result DeviceImpl::createTexture(const TextureDesc& desc_, const SubresourceData
         encoder->updateFence(m_queue->m_queueFence.get());
         encoder->endEncoding();
         commandBuffer->commit();
-        commandBuffer->waitUntilCompleted();
+        // Don't wait for the upload, see DeviceImpl::createBuffer().
+        textureImpl->m_pendingUpload = NS::RetainPtr(commandBuffer);
     }
 
     returnComPtr(outTexture, textureImpl);

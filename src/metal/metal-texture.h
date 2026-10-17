@@ -20,6 +20,9 @@ public:
 
 public:
     NS::SharedPtr<MTL::Texture> m_texture;
+    /// Command buffer uploading the initial data, if it may still be executing.
+    /// See BufferImpl::m_pendingUpload.
+    NS::SharedPtr<MTL::CommandBuffer> m_pendingUpload;
     MTL::TextureType m_textureType;
     MTL::PixelFormat m_pixelFormat;
     // True if this texture is created from a swap chain buffer.

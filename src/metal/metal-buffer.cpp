@@ -31,6 +31,7 @@ void BufferImpl::deleteThis()
 
 Result BufferImpl::getNativeHandle(NativeHandle* outHandle)
 {
+    waitForPendingUpload(m_pendingUpload);
     outHandle->type = NativeHandleType::MTLBuffer;
     outHandle->value = (uint64_t)m_buffer.get();
     return SLANG_OK;
@@ -111,7 +112,9 @@ Result DeviceImpl::createBuffer(const BufferDesc& desc_, const void* initData, I
             encoder->updateFence(m_queue->m_queueFence.get());
             encoder->endEncoding();
             commandBuffer->commit();
-            commandBuffer->waitUntilCompleted();
+            // Don't wait for the upload: work submitted to the queue is ordered after it through
+            // the queue fence, and the command buffer retains the staging buffer until it completes.
+            buffer->m_pendingUpload = NS::RetainPtr(commandBuffer);
         }
         else
         {
