@@ -583,20 +583,30 @@ void CommandRecorder::cmdSetRenderState(const commands::SetRenderState& cmd)
     if (updateBindings)
     {
         m_bindingData = static_cast<BindingDataImpl*>(cmd.bindingData);
-        encoder->setVertexBuffers(
-            m_bindingData->buffers,
-            m_bindingData->bufferOffsets,
-            NS::Range(0, m_bindingData->bufferCount)
-        );
-        encoder->setFragmentBuffers(
-            m_bindingData->buffers,
-            m_bindingData->bufferOffsets,
-            NS::Range(0, m_bindingData->bufferCount)
-        );
-        encoder->setVertexTextures(m_bindingData->textures, NS::Range(0, m_bindingData->textureCount));
-        encoder->setFragmentTextures(m_bindingData->textures, NS::Range(0, m_bindingData->textureCount));
-        encoder->setVertexSamplerStates(m_bindingData->samplers, NS::Range(0, m_bindingData->samplerCount));
-        encoder->setFragmentSamplerStates(m_bindingData->samplers, NS::Range(0, m_bindingData->samplerCount));
+        // Skip empty ranges, binding them costs a driver call per stage.
+        if (m_bindingData->bufferCount > 0)
+        {
+            encoder->setVertexBuffers(
+                m_bindingData->buffers,
+                m_bindingData->bufferOffsets,
+                NS::Range(0, m_bindingData->bufferCount)
+            );
+            encoder->setFragmentBuffers(
+                m_bindingData->buffers,
+                m_bindingData->bufferOffsets,
+                NS::Range(0, m_bindingData->bufferCount)
+            );
+        }
+        if (m_bindingData->textureCount > 0)
+        {
+            encoder->setVertexTextures(m_bindingData->textures, NS::Range(0, m_bindingData->textureCount));
+            encoder->setFragmentTextures(m_bindingData->textures, NS::Range(0, m_bindingData->textureCount));
+        }
+        if (m_bindingData->samplerCount > 0)
+        {
+            encoder->setVertexSamplerStates(m_bindingData->samplers, NS::Range(0, m_bindingData->samplerCount));
+            encoder->setFragmentSamplerStates(m_bindingData->samplers, NS::Range(0, m_bindingData->samplerCount));
+        }
 
         if (!m_device->m_hasResidencySet)
         {
@@ -790,8 +800,11 @@ void CommandRecorder::cmdSetComputeState(const commands::SetComputeState& cmd)
             m_bindingData->bufferOffsets,
             NS::Range(0, m_bindingData->bufferCount)
         );
-        encoder->setTextures(m_bindingData->textures, NS::Range(0, m_bindingData->textureCount));
-        encoder->setSamplerStates(m_bindingData->samplers, NS::Range(0, m_bindingData->samplerCount));
+        // Skip empty ranges, binding them costs a driver call.
+        if (m_bindingData->textureCount > 0)
+            encoder->setTextures(m_bindingData->textures, NS::Range(0, m_bindingData->textureCount));
+        if (m_bindingData->samplerCount > 0)
+            encoder->setSamplerStates(m_bindingData->samplers, NS::Range(0, m_bindingData->samplerCount));
 
         if (!m_device->m_hasResidencySet)
         {
