@@ -418,9 +418,12 @@ Result BindingDataBuilder::bindOrdinaryDataBufferIfNeeded(
     if (size == 0)
         return SLANG_OK;
 
+    // Metal validates that a bound buffer covers the struct's aligned size (its stride),
+    // which can be larger than the reflected size (e.g. 36 bytes padded to 40), so round
+    // the allocation up to 16 bytes.
     ComPtr<IBuffer> buffer;
     BufferDesc bufferDesc = {};
-    bufferDesc.size = size;
+    bufferDesc.size = math::calcAligned2(size, 16);
     bufferDesc.usage = BufferUsage::ConstantBuffer | BufferUsage::CopyDestination;
     bufferDesc.defaultState = ResourceState::ConstantBuffer;
     bufferDesc.memoryType = MemoryType::Upload;
