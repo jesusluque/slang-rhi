@@ -93,6 +93,18 @@ public:
 
     BindingDataImpl* m_bindingData = nullptr;
 
+    CommandList* m_commandList = nullptr;
+    const CommandList::CommandSlot* m_currentCommand = nullptr;
+
+    /// Indirect draw arguments with the draw count applied, for the indirect draws
+    /// with a count buffer in the current render pass.
+    struct CountedDrawArgs
+    {
+        const CommandList::CommandSlot* command;
+        InternalRefPtr<BufferImpl> buffer;
+    };
+    std::vector<CountedDrawArgs> m_countedDrawArgs;
+
     CommandRecorder(DeviceImpl* device)
         : m_device(device)
     {
@@ -145,6 +157,8 @@ public:
     MTL::ComputeCommandEncoder* getComputeCommandEncoder();
     MTL::AccelerationStructureCommandEncoder* getAccelerationStructureCommandEncoder();
     MTL::BlitCommandEncoder* getBlitCommandEncoder();
+    void applyRenderPassDrawCounts();
+    BufferImpl* getCountedDrawArgs();
     void endCommandEncoder();
 };
 
@@ -154,9 +168,11 @@ Result CommandRecorder::record(CommandBufferImpl* commandBuffer)
     m_commandBuffer = commandBuffer->m_commandBuffer;
 
     CommandList& commandList = commandBuffer->m_commandList;
+    m_commandList = &commandList;
     auto command = commandList.getCommands();
     while (command)
     {
+        m_currentCommand = command;
 #define SLANG_RHI_COMMAND_EXECUTE_X(x)                                                                                 \
     case CommandID::x:                                                                                                 \
         cmd##x(commandList.getCommand<commands::x>(command));                                                          \
@@ -532,6 +548,9 @@ void CommandRecorder::cmdBeginRenderPass(const commands::BeginRenderPass& cmd)
 
     m_useDepthStencil = desc.depthStencilAttachment != nullptr;
 
+    // Draw counts have to be applied with a compute pass before the render pass starts.
+    applyRenderPassDrawCounts();
+
     getRenderCommandEncoder(renderPassDesc.get());
 
     m_renderPassActive = true;
@@ -748,20 +767,24 @@ void CommandRecorder::cmdDrawIndirect(const commands::DrawIndirect& cmd)
     if (!m_renderStateValid)
         return;
 
-    // Metal has no native draw count buffer (this would require indirect command buffers).
+    BufferImpl* argBuffer = checked_cast<BufferImpl*>(cmd.argBuffer.buffer);
+    uint64_t argOffset = cmd.argBuffer.offset;
+    // Metal has no draw count buffer. Draw from a copy of the arguments where the draws
+    // at or above the draw count were zeroed when the render pass began.
     if (cmd.countBuffer)
     {
-        NOT_SUPPORTED(IRenderPassEncoder, drawIndirect with count buffer);
-        return;
+        argBuffer = getCountedDrawArgs();
+        argOffset = 0;
+        if (!argBuffer)
+            return;
     }
 
-    BufferImpl* argBuffer = checked_cast<BufferImpl*>(cmd.argBuffer.buffer);
     for (uint32_t i = 0; i < cmd.maxDrawCount; ++i)
     {
         m_renderCommandEncoder->drawPrimitives(
             m_renderPipeline->m_primitiveType,
             argBuffer->m_buffer.get(),
-            cmd.argBuffer.offset + i * sizeof(IndirectDrawArguments)
+            argOffset + i * sizeof(IndirectDrawArguments)
         );
     }
 }
@@ -771,14 +794,17 @@ void CommandRecorder::cmdDrawIndexedIndirect(const commands::DrawIndexedIndirect
     if (!m_renderStateValid)
         return;
 
-    // Metal has no native draw count buffer (this would require indirect command buffers).
+    BufferImpl* argBuffer = checked_cast<BufferImpl*>(cmd.argBuffer.buffer);
+    uint64_t argOffset = cmd.argBuffer.offset;
+    // Metal has no draw count buffer, see cmdDrawIndirect().
     if (cmd.countBuffer)
     {
-        NOT_SUPPORTED(IRenderPassEncoder, drawIndexedIndirect with count buffer);
-        return;
+        argBuffer = getCountedDrawArgs();
+        argOffset = 0;
+        if (!argBuffer)
+            return;
     }
 
-    BufferImpl* argBuffer = checked_cast<BufferImpl*>(cmd.argBuffer.buffer);
     for (uint32_t i = 0; i < cmd.maxDrawCount; ++i)
     {
         m_renderCommandEncoder->drawIndexedPrimitives(
@@ -787,9 +813,87 @@ void CommandRecorder::cmdDrawIndexedIndirect(const commands::DrawIndexedIndirect
             m_indexBuffer->m_buffer.get(),
             m_indexBufferOffset,
             argBuffer->m_buffer.get(),
-            cmd.argBuffer.offset + i * sizeof(IndirectDrawIndexedArguments)
+            argOffset + i * sizeof(IndirectDrawIndexedArguments)
         );
     }
+}
+
+void CommandRecorder::applyRenderPassDrawCounts()
+{
+    m_countedDrawArgs.clear();
+
+    for (auto command = m_currentCommand->next; command && command->id != CommandID::EndRenderPass;
+         command = command->next)
+    {
+        uint32_t maxDrawCount = 0;
+        BufferOffsetPair argBuffer;
+        BufferOffsetPair countBuffer;
+        size_t argSize = 0;
+        if (command->id == CommandID::DrawIndirect)
+        {
+            const auto& cmd = m_commandList->getCommand<commands::DrawIndirect>(command);
+            maxDrawCount = cmd.maxDrawCount;
+            argBuffer = cmd.argBuffer;
+            countBuffer = cmd.countBuffer;
+            argSize = sizeof(IndirectDrawArguments);
+        }
+        else if (command->id == CommandID::DrawIndexedIndirect)
+        {
+            const auto& cmd = m_commandList->getCommand<commands::DrawIndexedIndirect>(command);
+            maxDrawCount = cmd.maxDrawCount;
+            argBuffer = cmd.argBuffer;
+            countBuffer = cmd.countBuffer;
+            argSize = sizeof(IndirectDrawIndexedArguments);
+        }
+        if (!countBuffer || maxDrawCount == 0)
+            continue;
+
+        BufferDesc bufferDesc = {};
+        bufferDesc.size = maxDrawCount * argSize;
+        bufferDesc.usage = BufferUsage::IndirectArgument | BufferUsage::UnorderedAccess;
+        bufferDesc.defaultState = ResourceState::UnorderedAccess;
+        bufferDesc.memoryType = MemoryType::DeviceLocal;
+        ComPtr<IBuffer> buffer;
+        if (SLANG_FAILED(m_device->createBuffer(bufferDesc, nullptr, buffer.writeRef())))
+            continue;
+        BufferImpl* countedArgs = checked_cast<BufferImpl*>(buffer.get());
+
+        BufferImpl* args = checked_cast<BufferImpl*>(argBuffer.buffer);
+        BufferImpl* count = checked_cast<BufferImpl*>(countBuffer.buffer);
+        MTL::ComputeCommandEncoder* encoder = getComputeCommandEncoder();
+        if (!m_device->m_hasResidencySet)
+        {
+            encoder->useResource(args->m_buffer.get(), MTL::ResourceUsageRead);
+            encoder->useResource(count->m_buffer.get(), MTL::ResourceUsageRead);
+            encoder->useResource(countedArgs->m_buffer.get(), MTL::ResourceUsageWrite);
+        }
+        m_device->m_clearEngine.applyDrawCount(
+            encoder,
+            args->m_buffer.get(),
+            argBuffer.offset,
+            countedArgs->m_buffer.get(),
+            count->m_buffer.get(),
+            countBuffer.offset,
+            uint32_t(argSize / sizeof(uint32_t)),
+            maxDrawCount
+        );
+        m_countedDrawArgs.push_back({command, countedArgs});
+        // Keep the buffer alive until the command buffer has finished executing.
+        m_commandBufferImpl->m_bindingCache.buffers.push_back(countedArgs);
+    }
+
+    // End the compute encoder so the render pass waits for it through the queue fence.
+    endCommandEncoder();
+}
+
+BufferImpl* CommandRecorder::getCountedDrawArgs()
+{
+    for (const auto& countedDrawArgs : m_countedDrawArgs)
+    {
+        if (countedDrawArgs.command == m_currentCommand)
+            return countedDrawArgs.buffer;
+    }
+    return nullptr;
 }
 
 void CommandRecorder::cmdDrawMeshTasks(const commands::DrawMeshTasks& cmd)

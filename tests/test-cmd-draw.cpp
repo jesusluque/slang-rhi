@@ -161,7 +161,8 @@ public:
         int channelCount,
         const int* testXCoords,
         const int* testYCoords,
-        float* testResults
+        float* testResults,
+        const float* expected = nullptr
     )
     {
         // Read texture values back from four specific pixels located within the triangles
@@ -187,7 +188,46 @@ public:
 
         float expectedResult[] =
             {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f};
-        compareResultFuzzy(testResults, expectedResult, SLANG_COUNT_OF(expectedResult));
+        compareResultFuzzy(testResults, expected ? expected : expectedResult, SLANG_COUNT_OF(expectedResult));
+    }
+
+    // Draw count read from a count buffer by indirect draws, or -1 to not use a count buffer.
+    int32_t countBufferValue = -1;
+    ComPtr<IBuffer> countBuffer;
+
+    BufferOffsetPair createCountBuffer()
+    {
+        if (countBufferValue < 0)
+            return {};
+        struct CountData
+        {
+            uint32_t padding; // Ensure the count doesn't start at 0 offset for testing purposes
+            uint32_t count;
+        };
+        CountData countData = {42, uint32_t(countBufferValue)};
+        BufferDesc bufferDesc;
+        bufferDesc.size = sizeof(CountData);
+        bufferDesc.usage = BufferUsage::IndirectArgument | BufferUsage::UnorderedAccess;
+        bufferDesc.defaultState = ResourceState::UnorderedAccess;
+        countBuffer = device->createBuffer(bufferDesc, &countData);
+        REQUIRE(countBuffer != nullptr);
+        return {countBuffer, offsetof(CountData, count)};
+    }
+
+    // With two indirect draws of one instance each, the first two test pixels are covered by
+    // the first draw and the last two by the second one. Draws at or above the draw count
+    // leave their pixels cleared.
+    void checkIndirectTestResults(const int* testXCoords, const int* testYCoords)
+    {
+        float testResults[16];
+        float expected[] =
+            {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f};
+        for (int draw = countBufferValue < 0 ? 2 : countBufferValue; draw < 2; ++draw)
+        {
+            for (int i = 0; i < 8; ++i)
+                expected[draw * 8 + i] = 0.0f;
+        }
+        checkTestResults(4, 4, testXCoords, testYCoords, testResults, expected);
     }
 };
 
@@ -368,7 +408,7 @@ struct DrawIndirectTest : BaseDrawTest
         passEncoder->setRenderState(state);
 
         BufferOffsetPair argBuffer = {indirectBuffer, offsetof(IndirectArgData, args)};
-        passEncoder->drawIndirect(drawCount, argBuffer);
+        passEncoder->drawIndirect(drawCount, argBuffer, createCountBuffer());
         passEncoder->end();
 
         queue->submit(commandEncoder->finish());
@@ -382,12 +422,9 @@ struct DrawIndirectTest : BaseDrawTest
         setUpAndDraw();
 
         const int kPixelCount = 4;
-        const int kChannelCount = 4;
         int testXCoords[kPixelCount] = {64, 192, 64, 192};
         int testYCoords[kPixelCount] = {100, 100, 250, 250};
-        float testResults[kPixelCount * kChannelCount];
-
-        checkTestResults(kPixelCount, kChannelCount, testXCoords, testYCoords, testResults);
+        checkIndirectTestResults(testXCoords, testYCoords);
     }
 };
 
@@ -456,7 +493,7 @@ struct DrawIndexedIndirectTest : BaseDrawTest
         passEncoder->setRenderState(state);
 
         BufferOffsetPair argBuffer = {indirectBuffer, offsetof(IndexedIndirectArgData, args)};
-        passEncoder->drawIndexedIndirect(drawCount, argBuffer);
+        passEncoder->drawIndexedIndirect(drawCount, argBuffer, createCountBuffer());
         passEncoder->end();
 
         queue->submit(commandEncoder->finish());
@@ -471,12 +508,9 @@ struct DrawIndexedIndirectTest : BaseDrawTest
         setUpAndDraw();
 
         const int kPixelCount = 4;
-        const int kChannelCount = 4;
         int testXCoords[kPixelCount] = {64, 192, 64, 192};
         int testYCoords[kPixelCount] = {32, 100, 150, 250};
-        float testResults[kPixelCount * kChannelCount];
-
-        checkTestResults(kPixelCount, kChannelCount, testXCoords, testYCoords, testResults);
+        checkIndirectTestResults(testXCoords, testYCoords);
     }
 };
 
@@ -522,6 +556,36 @@ GPU_TEST_CASE("cmd-draw-indexed-indirect-multi", D3D12 | Vulkan | Metal)
     test.init(device);
     test.drawCount = 2;
     test.run();
+}
+
+GPU_TEST_CASE("cmd-draw-indirect-count", Vulkan | Metal)
+{
+    if (device->getDeviceType() == DeviceType::Vulkan && SLANG_APPLE_FAMILY)
+        SKIP("vkCmdDrawIndirectCount draws nothing on MoltenVK");
+    for (int32_t count : {0, 1, 2})
+    {
+        CAPTURE(count);
+        DrawIndirectTest test;
+        test.init(device);
+        test.drawCount = 2;
+        test.countBufferValue = count;
+        test.run();
+    }
+}
+
+GPU_TEST_CASE("cmd-draw-indexed-indirect-count", Vulkan | Metal)
+{
+    if (device->getDeviceType() == DeviceType::Vulkan && SLANG_APPLE_FAMILY)
+        SKIP("vkCmdDrawIndirectCount draws nothing on MoltenVK");
+    for (int32_t count : {0, 1, 2})
+    {
+        CAPTURE(count);
+        DrawIndexedIndirectTest test;
+        test.init(device);
+        test.drawCount = 2;
+        test.countBufferValue = count;
+        test.run();
+    }
 }
 
 GPU_TEST_CASE("cmd-draw-change-vertex-buffer", D3D11 | D3D12 | Vulkan | Metal | WGPU)

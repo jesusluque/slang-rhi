@@ -66,6 +66,30 @@ Result ClearEngine::initialize(MTL::Device* device)
         }
     }
 
+    {
+        auto drawCountShader = fs.open("src/metal/shaders/draw-count.metal");
+        auto drawCountSource = createStringView((void*)drawCountShader.begin(), drawCountShader.size());
+        NS::SharedPtr<MTL::Library> drawCountLibrary =
+            NS::TransferPtr(device->newLibrary(drawCountSource.get(), nullptr, &error));
+        if (error)
+        {
+            fprintf(stderr, "Metal error: %s\n", error->localizedDescription()->utf8String());
+            return SLANG_FAIL;
+        }
+        NS::SharedPtr<MTL::Function> function =
+            NS::TransferPtr(drawCountLibrary->newFunction(createString("apply_draw_count").get()));
+        if (!function)
+        {
+            return SLANG_FAIL;
+        }
+        m_drawCountPipeline = NS::TransferPtr(device->newComputePipelineState(function.get(), &error));
+        if (error)
+        {
+            fprintf(stderr, "Metal error: %s\n", error->localizedDescription()->utf8String());
+            return SLANG_FAIL;
+        }
+    }
+
     m_threadGroupSizes[size_t(TextureType::Texture1D)] = MTL::Size{256, 1, 1};
     m_threadGroupSizes[size_t(TextureType::Texture1DArray)] = MTL::Size{256, 1, 1};
     m_threadGroupSizes[size_t(TextureType::Texture2D)] = MTL::Size{32, 32, 1};
@@ -86,7 +110,33 @@ void ClearEngine::release()
             m_clearPipelines[textureType][type].reset();
         }
     }
+    m_drawCountPipeline.reset();
     m_library.reset();
+}
+
+void ClearEngine::applyDrawCount(
+    MTL::ComputeCommandEncoder* encoder,
+    MTL::Buffer* args,
+    NS::UInteger argsOffset,
+    MTL::Buffer* outArgs,
+    MTL::Buffer* count,
+    NS::UInteger countOffset,
+    uint32_t wordsPerDraw,
+    uint32_t maxDrawCount
+)
+{
+    struct
+    {
+        uint32_t wordsPerDraw;
+        uint32_t maxDrawCount;
+    } params = {wordsPerDraw, maxDrawCount};
+
+    encoder->setComputePipelineState(m_drawCountPipeline.get());
+    encoder->setBuffer(args, argsOffset, 0);
+    encoder->setBuffer(outArgs, 0, 1);
+    encoder->setBuffer(count, countOffset, 2);
+    encoder->setBytes(&params, sizeof(params), 3);
+    encoder->dispatchThreads(MTL::Size(maxDrawCount, 1, 1), MTL::Size(64, 1, 1));
 }
 
 void ClearEngine::clearTextureUint(

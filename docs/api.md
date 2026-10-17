@@ -252,8 +252,9 @@ WebGPU single indirect draws without a count buffer use the core WebGPU API.
 Other indirect-draw forms currently use Dawn's native multi-draw extension and
 require that optional feature to be enabled; they are unavailable in the Wasm path.
 
-Metal indirect draws issue one native indirect draw per argument record and do not
-support a count buffer.
+Metal indirect draws issue one native indirect draw per argument record. With a count
+buffer, a compute pass that runs before the render pass copies the argument records and
+zeroes the ones at or above the draw count.
 
 See [error handling and diagnostics](error-handling.md#webgpu-recording-and-validation)
 for WebGPU recording errors and asynchronous validation.

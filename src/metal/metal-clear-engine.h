@@ -30,6 +30,19 @@ public:
         const float clearValue[4]
     );
 
+    /// Copy `maxDrawCount` indirect draw argument structs of `wordsPerDraw` 32-bit words from
+    /// `args` to `outArgs`, zeroing the draws at or above the draw count read from `count`.
+    void applyDrawCount(
+        MTL::ComputeCommandEncoder* encoder,
+        MTL::Buffer* args,
+        NS::UInteger argsOffset,
+        MTL::Buffer* outArgs,
+        MTL::Buffer* count,
+        NS::UInteger countOffset,
+        uint32_t wordsPerDraw,
+        uint32_t maxDrawCount
+    );
+
 private:
     enum class Type
     {
@@ -53,6 +66,7 @@ private:
     static constexpr size_t kTypeCount = size_t(Type::Count);
 
     NS::SharedPtr<MTL::Library> m_library;
+    NS::SharedPtr<MTL::ComputePipelineState> m_drawCountPipeline;
     NS::SharedPtr<MTL::ComputePipelineState> m_clearPipelines[kTextureTypeCount][kTypeCount];
     MTL::Size m_threadGroupSizes[kTextureTypeCount];
 
