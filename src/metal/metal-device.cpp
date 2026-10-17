@@ -261,6 +261,19 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
         addFeature(Feature::ResidencySet);
     }
 
+    // Apple GPUs support 16-bit and 64-bit types, SIMD-group (wave) operations with a
+    // SIMD-group size of 32, and atomic float add on device memory.
+    if (m_device->supportsFamily(MTL::GPUFamilyApple7))
+    {
+        addFeature(Feature::Half);
+        addFeature(Feature::Int16);
+        addFeature(Feature::Int64);
+        addFeature(Feature::WaveOps);
+        addFeature(Feature::AtomicFloat);
+        m_info.limits.minWaveSize = 32;
+        m_info.limits.maxWaveSize = 32;
+    }
+
     addCapability(Capability::metal);
     const auto osVersion = NS::ProcessInfo::processInfo()->operatingSystemVersion();
     if (osVersion.majorVersion >= 11)
