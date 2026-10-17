@@ -470,6 +470,10 @@ private:
 
 Result resolvePipelines(Device* device, CommandList* commandList)
 {
+    // Concrete pipelines don't need resolving, so skip walking the command list.
+    if (!commandList->hasVirtualPipelines())
+        return SLANG_OK;
+
     PipelineResolver resolver(device, commandList);
     return resolver.resolve();
 }
