@@ -198,3 +198,39 @@ GPU_TEST_CASE("native-handle-command-buffer", D3D12 | Vulkan | Metal)
         break;
     }
 }
+
+// Metal uploads the initial data of device-local resources asynchronously on the device's queue.
+// A native handle can be used outside that queue, so the data must be ready once it is returned.
+GPU_TEST_CASE("native-handle-buffer-initial-data", Metal)
+{
+    const size_t count = 16 * 1024 * 1024;
+    std::vector<uint32_t> data(count);
+    for (size_t i = 0; i < count; ++i)
+        data[i] = uint32_t(i * 2654435761u);
+
+    BufferDesc bufferDesc = {};
+    bufferDesc.size = count * sizeof(uint32_t);
+    bufferDesc.usage = BufferUsage::ShaderResource | BufferUsage::CopySource;
+    bufferDesc.memoryType = MemoryType::DeviceLocal;
+
+    // Use the native buffer from a second device, whose queue isn't ordered after the upload.
+    GpuTestContext ctx2;
+    ctx2.slangGlobalSession = getSlangGlobalSession();
+    ComPtr<IDevice> device2 = createTestingDevice(&ctx2, DeviceType::Metal, false);
+    REQUIRE(device2);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        ComPtr<IBuffer> buffer;
+        REQUIRE_CALL(device->createBuffer(bufferDesc, data.data(), buffer.writeRef()));
+        NativeHandle handle;
+        REQUIRE_CALL(buffer->getNativeHandle(&handle));
+
+        ComPtr<IBuffer> buffer2;
+        REQUIRE_CALL(device2->createBufferFromNativeHandle(handle, bufferDesc, buffer2.writeRef()));
+        uint32_t tail[4] = {};
+        REQUIRE_CALL(device2->readBuffer(buffer2, bufferDesc.size - sizeof(tail), sizeof(tail), tail));
+        for (size_t j = 0; j < 4; ++j)
+            CHECK_EQ(tail[j], data[count - 4 + j]);
+    }
+}

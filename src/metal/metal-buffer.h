@@ -22,6 +22,10 @@ public:
 public:
     NS::SharedPtr<MTL::Buffer> m_buffer;
     DeviceAddress m_deviceAddress = 0;
+    /// Command buffer uploading the initial data, if it may still be executing.
+    /// Work on the device's queue is ordered after it, but the native buffer
+    /// can be used elsewhere, so getNativeHandle() waits for it.
+    NS::SharedPtr<MTL::CommandBuffer> m_pendingUpload;
     BufferImpl* m_nextAtSameAddr = nullptr;
 };
 
