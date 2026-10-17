@@ -320,21 +320,39 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
 
         if (isFormatSupported && translatePixelFormat(format) != MTL::PixelFormatInvalid)
         {
-            // depth/stencil formats?
+            const FormatInfo& info = getFormatInfo(format);
             formatSupport |= FormatSupport::CopySource;
             formatSupport |= FormatSupport::CopyDestination;
             formatSupport |= FormatSupport::Texture;
-            if (isDepthFormat(format))
-                formatSupport |= FormatSupport::DepthStencil;
-            formatSupport |= FormatSupport::RenderTarget;
-            formatSupport |= FormatSupport::Blendable;
-            formatSupport |= FormatSupport::Resolvable;
             formatSupport |= FormatSupport::ShaderLoad;
-            formatSupport |= FormatSupport::ShaderSample;
-            formatSupport |= FormatSupport::ShaderUavLoad;
-            formatSupport |= FormatSupport::ShaderUavStore;
-            formatSupport |= FormatSupport::ShaderAtomic;
-            formatSupport |= FormatSupport::Buffer;
+            if (info.kind == FormatKind::DepthStencil)
+            {
+                // Depth/stencil formats can only be used as depth/stencil attachments and be read in shaders.
+                formatSupport |= FormatSupport::DepthStencil;
+                formatSupport |= FormatSupport::ShaderSample;
+            }
+            else if (info.isCompressed)
+            {
+                // Compressed formats can only be sampled.
+                formatSupport |= FormatSupport::ShaderSample;
+            }
+            else
+            {
+                formatSupport |= FormatSupport::RenderTarget;
+                formatSupport |= FormatSupport::ShaderUavLoad;
+                formatSupport |= FormatSupport::ShaderUavStore;
+                formatSupport |= FormatSupport::Buffer;
+                // Integer formats can't be filtered, blended or resolved.
+                if (info.kind != FormatKind::Integer)
+                {
+                    formatSupport |= FormatSupport::ShaderSample;
+                    formatSupport |= FormatSupport::Blendable;
+                    formatSupport |= FormatSupport::Resolvable;
+                }
+                // Texture atomics are only supported for 32-bit integer formats.
+                if (format == Format::R32Uint || format == Format::R32Sint)
+                    formatSupport |= FormatSupport::ShaderAtomic;
+            }
         }
         if (translateVertexFormat(format) != MTL::VertexFormatInvalid)
         {

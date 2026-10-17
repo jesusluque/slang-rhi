@@ -732,3 +732,33 @@ GPU_TEST_CASE("formats", ALL & ~CPU)
     test.init(device);
     test.run();
 }
+
+GPU_TEST_CASE("format-support-metal", Metal)
+{
+    for (uint32_t i = 1; i < uint32_t(Format::_Count); ++i)
+    {
+        Format format = Format(i);
+        const FormatInfo& info = getFormatInfo(format);
+        FormatSupport support = FormatSupport::None;
+        REQUIRE_CALL(device->getFormatSupport(format, &support));
+        if (!is_set(support, FormatSupport::Texture))
+            continue;
+        CAPTURE(info.name);
+
+        if (info.kind == FormatKind::DepthStencil || info.isCompressed)
+        {
+            CHECK_FALSE(is_set(support, FormatSupport::RenderTarget));
+            CHECK_FALSE(is_set(support, FormatSupport::ShaderUavStore));
+            CHECK_FALSE(is_set(support, FormatSupport::Blendable));
+        }
+        if (info.kind != FormatKind::DepthStencil)
+            CHECK_FALSE(is_set(support, FormatSupport::DepthStencil));
+        if (info.kind == FormatKind::Integer)
+        {
+            CHECK_FALSE(is_set(support, FormatSupport::Blendable));
+            CHECK_FALSE(is_set(support, FormatSupport::Resolvable));
+        }
+        if (is_set(support, FormatSupport::ShaderAtomic))
+            CHECK(info.kind == FormatKind::Integer);
+    }
+}

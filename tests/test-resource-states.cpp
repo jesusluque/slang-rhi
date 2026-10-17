@@ -59,7 +59,7 @@ GPU_TEST_CASE("buffer-resource-states", D3D12 | Vulkan)
     queue->waitOnHost();
 }
 
-GPU_TEST_CASE("texture-resource-states", D3D12 | Vulkan)
+GPU_TEST_CASE("texture-resource-states", D3D12 | Vulkan | Metal)
 {
     ComPtr<IShaderProgram> shaderProgram;
     REQUIRE_CALL(loadProgram(device, "test-dummy", "computeMain", shaderProgram.writeRef()));
